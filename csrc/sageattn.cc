@@ -160,3 +160,58 @@ PD_BUILD_OP(quant_per_warp_int8_cuda)
     .SetInplaceMap({{"input", "out1"}, {"output", "out2"}, {"scale", "out3"}}) // Inplace
     .Attrs({"tensor_layout: int"})
     .SetKernelFn(PD_KERNEL(quant_per_warp_int8_cuda_fwd));
+
+
+void transpose_pad_permute_cuda_fwd(
+                paddle::Tensor& input,
+                paddle::Tensor& output,
+                int tensor_layout);
+
+// quant_per_warp_int8_cuda_fwd does not have any return
+// so we don't implement infer type & shape function here.
+
+PD_BUILD_OP(transpose_pad_permute_cuda)
+    .Inputs({"input", "output"})
+    .Outputs({"out1", "out2"})
+    .SetInplaceMap({{"input", "out1"}, {"output", "out2"}}) // Inplace
+    .Attrs({"tensor_layout: int"})
+    .SetKernelFn(PD_KERNEL(transpose_pad_permute_cuda_fwd));
+
+
+void scale_fuse_quant_cuda_fwd(
+                paddle::Tensor& input,
+                paddle::Tensor& output,
+                paddle::Tensor& scale,
+                int num_tokens,
+                float scale_max,
+                int tensor_layout);
+
+// quant_per_warp_int8_cuda_fwd does not have any return
+// so we don't implement infer type & shape function here.
+
+PD_BUILD_OP(scale_fuse_quant_cuda)
+    .Inputs({"input", "output", "scale"})
+    .Outputs({"out1", "out2", "out3"})
+    .SetInplaceMap({{"input", "out1"}, {"output", "out2"}, {"scale", "out3"}}) // Inplace
+    .Attrs({"num_tokens: int", "scale_max: float", "tensor_layout: int"})
+    .SetKernelFn(PD_KERNEL(scale_fuse_quant_cuda_fwd));
+
+
+void mean_scale_fuse_quant_cuda_fwd(
+                paddle::Tensor& input,
+                paddle::Tensor& output,
+                paddle::Tensor& mean,
+                paddle::Tensor& scale,
+                int num_tokens,
+                float scale_max,
+                int tensor_layout);
+
+// quant_per_warp_int8_cuda_fwd does not have any return
+// so we don't implement infer type & shape function here.
+
+PD_BUILD_OP(mean_scale_fuse_quant_cuda)
+    .Inputs({"input", "output", "mean", "scale"})
+    .Outputs({"out1", "out2", "out3", "out4"})
+    .SetInplaceMap({{"input", "out1"}, {"output", "out2"}, {"mean", "out3"}, {"scale", "out4"}}) // Inplace
+    .Attrs({"num_tokens: int", "scale_max: float", "tensor_layout: int"})
+    .SetKernelFn(PD_KERNEL(mean_scale_fuse_quant_cuda_fwd));
