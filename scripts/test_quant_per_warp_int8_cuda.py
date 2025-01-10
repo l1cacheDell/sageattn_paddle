@@ -25,6 +25,7 @@ q_t = torch.randn(size=(bsz, seq_len, head_num, head_dim), dtype=torch.float16).
 q_int8_t = torch.empty(q_t.shape, dtype=torch.int8, device=q_t.device)
 q_scale = torch.empty((bsz, head_num, ((seq_len + 127) // 128) * (128 // 32)), device=q_t.device, dtype=torch.float32)
 
+
 head_dim_og = q_t.size(-1)
 sm_scale = head_dim_og**-0.5
 
