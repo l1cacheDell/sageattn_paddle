@@ -17,7 +17,7 @@ def precision_cmp(t1: torch.Tensor, t2: paddle.Tensor):
     
     # if sim == 0:    
     # print(pt1 - t2)
-    print(pt1[0, 0, :, 0])
-    print(t2[0, 0, :, 0])
+    # print(pt1[0, 0, :, 0])
+    # print(t2[0, 0, :, 0])
     
     return sim, l1

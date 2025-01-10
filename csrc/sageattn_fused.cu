@@ -57,7 +57,7 @@ __global__ void QuantInt8Kernel(T *__restrict__ input, T *__restrict__ mean, int
   static_assert(num_threads_per_token <= 32, "The number of threads per token must be less than or equal to warp size");
 
   T x_val[num_pack_per_thread][8];
-  T mean_val[8];
+  // T mean_val[8];
   float x_val_float[num_pack_per_thread][8];
   float mean_val_float[8];
 
@@ -74,11 +74,16 @@ __global__ void QuantInt8Kernel(T *__restrict__ input, T *__restrict__ mean, int
 
   if constexpr (sub_mean)
   {
-    *(float4*)(&mean_val[0]) = *(float4*)(mean_ptr_base);
+    // *(float4*)(&mean_val[0]) = *(float4*)(mean_ptr_base);
+// #pragma unroll
+//     for (int ii = 0; ii < 8; ii++) {
+//       mean_val[ii] = *(mean_ptr_base[ii]);
+//     }
+
 #pragma unroll
     for (uint32_t j = 0; j < 8; j++)
     {
-      mean_val_float[j] = convert_to_float(mean_val[j]);
+      mean_val_float[j] = convert_to_float(mean_ptr_base[j]);
     }
   }
 
@@ -179,6 +184,95 @@ __global__ void QuantInt8Kernel(T *__restrict__ input, T *__restrict__ mean, int
       *reinterpret_cast<float2*>(output_ptr_base + i * iter_stride * stride_seq_output) = *reinterpret_cast<float2*>(&o_val[i][0]);
     }
   }
+}
+
+void quant_per_block_int8_fuse_sub_mean_cuda_fwd(
+                paddle::Tensor& input,
+                paddle::Tensor& mean,
+                paddle::Tensor& output,
+                paddle::Tensor& scale,
+                int block_size,
+                int tensor_layout)
+{
+  CHECK_CUDA(input);
+  CHECK_CUDA(mean);
+  CHECK_CUDA(output);
+  CHECK_CUDA(scale);
+  
+  CHECK_DTYPE(output, paddle::DataType::INT8);
+  CHECK_DTYPE(scale, paddle::DataType::FLOAT32);
+
+  CHECK_LASTDIM_CONTIGUOUS(input);
+  CHECK_CONTIGUOUS(mean);
+  CHECK_CONTIGUOUS(output);
+  CHECK_CONTIGUOUS(scale);
+
+  CHECK_DIMS(input, 4);
+  CHECK_DIMS(mean, 3);
+  CHECK_DIMS(output, 4);
+  CHECK_DIMS(scale, 3);
+
+  const int batch_size = input.shape()[0];
+  const int head_dim = input.shape()[3];
+
+  int stride_bz_input = input.strides()[0];
+  int stride_bz_output = output.strides()[0];
+
+  int num_tokens, num_heads;
+  int stride_seq_input, stride_h_input, stride_seq_output, stride_h_output;
+
+  if (tensor_layout == 0)
+  {
+    num_tokens = input.shape()[1];
+    num_heads = input.shape()[2];
+    stride_seq_input = input.strides()[1];
+    stride_h_input = input.strides()[2];
+    stride_seq_output = output.strides()[1];
+    stride_h_output = output.strides()[2];
+  }
+  else
+  {
+    num_tokens = input.shape()[2];
+    num_heads = input.shape()[1];
+    stride_seq_input = input.strides()[2];
+    stride_h_input = input.strides()[1];
+    stride_seq_output = output.strides()[2];
+    stride_h_output = output.strides()[1];
+  }
+
+  auto input_dtype = input.dtype();
+  auto mean_dtype = mean.dtype();
+
+  PD_CHECK(input_dtype == mean_dtype, "Input and mean must have the same data type");
+
+  DISPATCH_PADDLE_DTYPE_TO_CTYPE_FP16(input_dtype, c_type, {
+    DISPATCH_BLOCK_SIZE(block_size, BLOCK_SIZE, {
+      DISPATCH_HEAD_DIM(head_dim, HEAD_DIM, {
+        CHECK_SHAPE(mean, batch_size, num_heads, head_dim);
+        CHECK_SHAPE(output, input.shape()[0], input.shape()[1], input.shape()[2], input.shape()[3]);
+        CHECK_SHAPE(scale, batch_size, num_heads, (num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE);
+
+        dim3 grid((num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE, num_heads, batch_size);
+
+        constexpr int num_pack_per_thread = (BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024;
+
+        dim3 block(BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
+
+        QuantInt8Kernel<HEAD_DIM, BLOCK_SIZE, num_pack_per_thread, false, true, c_type><<<grid, block>>>(
+          reinterpret_cast<c_type*>(input.data()),
+          reinterpret_cast<c_type*>(mean.data()),
+          output.data<int8_t>(),
+          reinterpret_cast<float*>(scale.data()),
+          0.0f,
+          num_tokens,
+          stride_bz_input, stride_seq_input, stride_h_input,
+          mean.strides()[0], mean.strides()[1],
+          stride_bz_output, stride_seq_output, stride_h_output,
+          scale.strides()[0], scale.strides()[1]
+        );
+      });
+    });
+  });
 }
 
 void quant_per_warp_int8_cuda_fwd(

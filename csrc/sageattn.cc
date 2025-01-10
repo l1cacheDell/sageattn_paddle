@@ -125,6 +125,25 @@ PD_BUILD_OP(qk_int8_sv_f16_accum_f32_attn)
 //  ============== fused kernels registry ==============
 //
 
+void quant_per_block_int8_fuse_sub_mean_cuda_fwd(
+                paddle::Tensor& input,
+                paddle::Tensor& mean,
+                paddle::Tensor& output,
+                paddle::Tensor& scale,
+                int block_size,
+                int tensor_layout);
+
+
+// quant_per_warp_int8_cuda_fwd does not have any return
+// so we don't implement infer type & shape function here.
+
+PD_BUILD_OP(quant_per_block_int8_fuse_sub_mean_cuda)
+    .Inputs({"input", "mean", "output", "scale"})
+    .Outputs({"out1", "out2", "out3", "out4"})
+    .SetInplaceMap({{"input", "out1"}, {"mean", "out2"}, {"output", "out3"}, {"scale", "out4"}}) // Inplace
+    .Attrs({"block_size: int", "tensor_layout: int"})
+    .SetKernelFn(PD_KERNEL(quant_per_block_int8_fuse_sub_mean_cuda_fwd));
+
 void quant_per_warp_int8_cuda_fwd(
                 paddle::Tensor& input,
                 paddle::Tensor& output,

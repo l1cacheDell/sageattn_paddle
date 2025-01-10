@@ -60,3 +60,7 @@ paddle.device.synchronize()
 sim, l1 = precision_cmp(q_int8_t, q_int8_t_p)
 
 print(sim, l1)
+
+sim, l1 = precision_cmp(q_int8_t, q_int8_t_p)
+
+print(sim, l1)
