@@ -1,0 +1,6 @@
+compile_output.txt
+*egg-info/
+dist/
+build/
+errors_only.txt
+*__pycache__/
