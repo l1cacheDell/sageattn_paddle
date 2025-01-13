@@ -45,6 +45,11 @@ __device__ __forceinline__ T convert_from_float(float val)
 // 
 // =========== kernel impl zone ===========
 //
+// Notice: the address in paddle is aligned in 4 bytes, not 16 bytes
+// so theoretically the `float4(xx) = xx` way cannot load data from global memory
+// peacefully, instead it will trigger CUDA 719: address misaligned fault.
+// Thus, we will use pragma unroll macro and load data in a for loop, which introduces
+// extra latency, but works in paddle.
 template <uint32_t head_dim, uint32_t BLOCK_SIZE, uint32_t num_pack_per_thread = 1, bool has_sm_scale = false, bool sub_mean = false, typename T>
 __global__ void QuantInt8Kernel(T *__restrict__ input, T *__restrict__ mean, int8_t *__restrict__ output, float *__restrict__ scale, float sm_scale, const uint32_t num_tokens, 
                             const uint32_t stride_bz_input, const uint32_t stride_seq_input, const uint32_t stride_h_input,
@@ -61,7 +66,7 @@ __global__ void QuantInt8Kernel(T *__restrict__ input, T *__restrict__ mean, int
   static_assert(num_threads_per_token <= 32, "The number of threads per token must be less than or equal to warp size");
 
   T x_val[num_pack_per_thread][8];
-  // T mean_val[8];
+  T mean_val[8];
   float x_val_float[num_pack_per_thread][8];
   float mean_val_float[8];
 
@@ -79,15 +84,15 @@ __global__ void QuantInt8Kernel(T *__restrict__ input, T *__restrict__ mean, int
   if constexpr (sub_mean)
   {
     // *(float4*)(&mean_val[0]) = *(float4*)(mean_ptr_base);
-// #pragma unroll
-//     for (int ii = 0; ii < 8; ii++) {
-//       mean_val[ii] = *(mean_ptr_base[ii]);
-//     }
+#pragma unroll
+    for (int ii = 0; ii < 8; ii++) {
+      mean_val[ii] = mean_ptr_base[ii];
+    }
 
 #pragma unroll
     for (uint32_t j = 0; j < 8; j++)
     {
-      mean_val_float[j] = convert_to_float(mean_ptr_base[j]);
+      mean_val_float[j] = convert_to_float(mean_val[j]);
     }
   }
 
@@ -364,9 +369,7 @@ __global__ void MeanScaleKernel(T *__restrict__ input, int8_t *__restrict__ outp
     floatx4_to_e4m3x4(x_val_fp8, x_val_float, x_val_float + 2);
     floatx4_to_e4m3x4(x_val_fp8 + 1, x_val_float + 4, x_val_float + 6);
 
-    // *(uint2*)(output_ptr_base + i * gmem_stride) = *(uint2*)(&x_val_fp8[0]);
-    *(output_ptr_base + i * gmem_stride) = x_val_fp8[0];
-    *(output_ptr_base + i * gmem_stride + 1) = x_val_fp8[1];  // TODO: not debugged
+    *(uint2*)(output_ptr_base + i * gmem_stride) = *(uint2*)(&x_val_fp8[0]);
   }
 }
 

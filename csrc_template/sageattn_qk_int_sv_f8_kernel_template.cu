@@ -2185,7 +2185,7 @@ torch::Tensor qk_int8_sv_f8_accum_f32_attn_inst_buf(torch::Tensor query,
   });
 
   return lse;
-}
+ß
 
 // impl -> see sageattn.h file
 torch::Tensor qk_int8_sv_f8_accum_f32_fuse_v_scale_fuse_v_mean_attn(torch::Tensor query,
