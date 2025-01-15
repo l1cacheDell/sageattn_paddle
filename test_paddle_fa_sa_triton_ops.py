@@ -3,7 +3,8 @@ import argparse
 import nvtx
 
 from paddle_sageattn import sageattn_qk_int8_pv_fp8_cuda
-from utils import precision_cmp, precision_cmp_paddle
+from paddlemix import triton_ops
+from utils import precision_cmp_paddle
 
 parser = argparse.ArgumentParser(description='Benchmark QK Int8 PV FP16 CUDA')
 parser.add_argument('--batch_size', type=int, default=4, help='Batch size')
@@ -29,15 +30,15 @@ v = paddle.randn(shape=(bsz, seq_len, num_heads, head_dim), dtype=paddle.float16
 is_casual = False
 
 for i in range(5):
-    o = paddle.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=is_casual, training=False)
+    o = triton_ops.sageattn_qk_int8_pv_fp16_triton(q, k, v, tensor_layout=tensor_layout, is_causal=is_casual, smooth_k=True, return_lse=False)
 
 paddle.device.synchronize()
 
 # runing
 for i in range(100):
-    transformer_nvtx = nvtx.start_range(message="FA2_casual_false", color="red")
+    transformer_nvtx = nvtx.start_range(message="triton_casual_false", color="red")
     # code
-    o1 = paddle.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=is_casual, training=False)
+    o1 = triton_ops.sageattn_qk_int8_pv_fp16_triton(q, k, v, tensor_layout=tensor_layout, is_causal=is_casual, smooth_k=True, return_lse=False)
     
     paddle.device.synchronize()
     nvtx.end_range(transformer_nvtx)    
@@ -60,36 +61,37 @@ print(f"is casual: {is_casual}, FLOPS: {flops}")
 
 cos, l1 = precision_cmp_paddle(o1, o2)
 print(f"cos: {cos}, l1: {l1}")
+print(paddle.max(o2-o1))
 
 ################################################################################################################################################################
 
-is_casual = True
+# is_casual = True
 
-for i in range(5):
-    o = paddle.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=is_casual, training=False)
+# for i in range(5):
+#     o = paddle.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=is_casual, training=False)
 
-paddle.device.synchronize()
+# paddle.device.synchronize()
 
-# runing
-for i in range(100):
-    transformer_nvtx = nvtx.start_range(message="FA2_casual_true", color="red")
-    o1 = paddle.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=is_casual, training=False)
-    paddle.device.synchronize()
-    nvtx.end_range(transformer_nvtx)    
+# # runing
+# for i in range(100):
+#     transformer_nvtx = nvtx.start_range(message="FA2_casual_true", color="red")
+#     o1 = paddle.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=is_casual, training=False)
+#     paddle.device.synchronize()
+#     nvtx.end_range(transformer_nvtx)    
 
-# warm up SA
-for i in range(5):
-    o = sageattn_qk_int8_pv_fp8_cuda(q, k, v, tensor_layout=tensor_layout, is_causal=is_casual, return_lse=return_lse, pv_accum_dtype="fp32+fp32")
+# # warm up SA
+# for i in range(5):
+#     o = sageattn_qk_int8_pv_fp8_cuda(q, k, v, tensor_layout=tensor_layout, is_causal=is_casual, return_lse=return_lse, pv_accum_dtype="fp32+fp32")
     
-# runing
-for i in range(100):
-    sageatt_nvtx = nvtx.start_range(message="Sageattn_casual_true", color="green")
-    o2 = sageattn_qk_int8_pv_fp8_cuda(q, k, v, tensor_layout=tensor_layout, is_causal=is_casual, return_lse=return_lse, pv_accum_dtype="fp32+fp32")
-    paddle.device.synchronize()
-    nvtx.end_range(sageatt_nvtx)
+# # runing
+# for i in range(100):
+#     sageatt_nvtx = nvtx.start_range(message="Sageattn_casual_true", color="green")
+#     o2 = sageattn_qk_int8_pv_fp8_cuda(q, k, v, tensor_layout=tensor_layout, is_causal=is_casual, return_lse=return_lse, pv_accum_dtype="fp32+fp32")
+#     paddle.device.synchronize()
+#     nvtx.end_range(sageatt_nvtx)
     
-flops = 4 * num_heads * bsz * head_dim * seq_len * seq_len / (2 if is_casual else 1)
-print(f"is casual: {is_casual}, FLOPS: {flops}")
+# flops = 4 * num_heads * bsz * head_dim * seq_len * seq_len / (2 if is_casual else 1)
+# print(f"is casual: {is_casual}, FLOPS: {flops}")
 
-cos, l1 = precision_cmp_paddle(o1, o2)
-print(f"cos: {cos}, l1: {l1}")
+# cos, l1 = precision_cmp_paddle(o1, o2)
+# print(f"cos: {cos}, l1: {l1}")
