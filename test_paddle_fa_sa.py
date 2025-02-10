@@ -3,7 +3,7 @@ import argparse
 import nvtx
 
 from paddle_sageattn import sageattn_qk_int8_pv_fp8_cuda
-from utils import precision_cmp, precision_cmp_paddle
+from utils import precision_cmp_paddle
 
 parser = argparse.ArgumentParser(description='Benchmark QK Int8 PV FP16 CUDA')
 parser.add_argument('--batch_size', type=int, default=4, help='Batch size')
