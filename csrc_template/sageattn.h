@@ -105,18 +105,6 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_fuse_v_mean_att
                     float sm_scale,
                     int return_lse);
 
-std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_attn_buf(paddle::Tensor query,
-                    paddle::Tensor key,
-                    paddle::Tensor value,
-                    paddle::Tensor output,
-                    paddle::Tensor query_scale,
-                    paddle::Tensor key_scale,
-                    int tensor_layout,
-                    int is_causal,
-                    int qk_quant_gran,
-                    float sm_scale,
-                    int return_lse);
-
 std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_attn_inst_buf(paddle::Tensor query,
                     paddle::Tensor key,
                     paddle::Tensor value,
@@ -129,18 +117,6 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_attn_inst_buf(paddle::Tensor
                     float sm_scale,
                     int return_lse);
 
-std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_buf(paddle::Tensor query,
-                    paddle::Tensor key,
-                    paddle::Tensor value,
-                    paddle::Tensor output,
-                    paddle::Tensor query_scale,
-                    paddle::Tensor key_scale,
-                    paddle::Tensor value_scale,
-                    int tensor_layout,
-                    int is_causal,
-                    int qk_quant_gran,
-                    float sm_scale,
-                    int return_lse);
 
 std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf(paddle::Tensor query,
                     paddle::Tensor key,

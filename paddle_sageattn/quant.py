@@ -7,6 +7,9 @@ def per_warp_int8(
     q: paddle.Tensor, 
     k: paddle.Tensor, 
     km: Optional[paddle.Tensor] = None, 
+    BLKQ: int =128,
+    WARPQ: int =32,
+    BLKK: int =64,
     tensor_layout: str ="HND"
 ):
     q_int8 = paddle.empty(q.shape, dtype=paddle.int8)
@@ -25,8 +28,8 @@ def per_warp_int8(
     
     _tensor_layout = 0 if tensor_layout == "NHD" else 1
 
-    q_scale = paddle.empty((b, h_qo, ((qo_len + 127) // 128) * (128 // 32)), dtype=paddle.float32)
-    k_scale = paddle.empty((b, h_kv, (kv_len + 63) // 64), dtype=paddle.float32)
+    q_scale = paddle.empty((b, h_qo, ((qo_len + BLKQ - 1) // BLKQ) * (BLKQ // WARPQ)), dtype=paddle.float32)
+    k_scale = paddle.empty((b, h_kv, (kv_len + BLKK - 1) // BLKK), dtype=paddle.float32)
 
     sageattn_custom_ops.quant_per_warp_int8_cuda(q, q_int8, q_scale, _tensor_layout)
     # print(f"q: {q[0, 0, 0, :]}")
