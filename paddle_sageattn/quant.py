@@ -3,6 +3,47 @@ import sageattn_custom_ops
 
 from typing import Optional
 
+def per_block_int8(
+    q: paddle.Tensor, 
+    k: paddle.Tensor, 
+    km: Optional[paddle.Tensor] = None, 
+    BLKQ: int =128,
+    BLKK: int =64,
+    sm_scale: Optional[float] = None, 
+    tensor_layout: str ="HND"
+):
+    q_int8 = paddle.empty(q.shape, dtype=paddle.int8)
+    k_int8 = paddle.empty(k.shape, dtype=paddle.int8)
+
+    if tensor_layout == "HND":
+        b, h_qo, qo_len, head_dim = q.shape
+        _, h_kv, kv_len, _ = k.shape
+    elif tensor_layout == "NHD":
+        b, qo_len, h_qo, head_dim = q.shape
+        _, kv_len, h_kv, _ = k.shape
+    else:
+        raise ValueError(f"Unknown tensor layout: {tensor_layout}")
+
+    _tensor_layout = 0 if tensor_layout == "NHD" else 1
+
+    q_scale = paddle.empty((b, h_qo, (qo_len + BLKQ - 1) // BLKQ), dtype=paddle.float32)
+    k_scale = paddle.empty((b, h_kv, (kv_len + BLKK - 1) // BLKK), dtype=paddle.float32)
+
+    if sm_scale is None:
+        sm_scale = head_dim**-0.5
+    
+    sm_scale *= 1.44269504
+
+    sageattn_custom_ops.quant_per_block_int8_cuda(q, q_int8, q_scale, sm_scale, BLKQ, _tensor_layout)
+    if km is not None:
+        km = km.squeeze(1) if _tensor_layout == 0 else km.squeeze(2)
+        sageattn_custom_ops.quant_per_block_int8_fuse_sub_mean_cuda(k, km, k_int8, k_scale, BLKK, _tensor_layout)
+    else:
+        sageattn_custom_ops.quant_per_block_int8_cuda(k, k_int8, k_scale, BLKK, _tensor_layout)
+
+    return q_int8, q_scale, k_int8, k_scale
+
+
 def per_warp_int8(
     q: paddle.Tensor, 
     k: paddle.Tensor, 
@@ -31,14 +72,13 @@ def per_warp_int8(
     q_scale = paddle.empty((b, h_qo, ((qo_len + BLKQ - 1) // BLKQ) * (BLKQ // WARPQ)), dtype=paddle.float32)
     k_scale = paddle.empty((b, h_kv, (kv_len + BLKK - 1) // BLKK), dtype=paddle.float32)
 
-    sageattn_custom_ops.quant_per_warp_int8_cuda(q, q_int8, q_scale, _tensor_layout)
-    # print(f"q: {q[0, 0, 0, :]}")
-    # print(f"q int8: {q_int8[0, 0, 0, :]}")
+    sageattn_custom_ops.quant_per_warp_int8_cuda(q, q_int8, q_scale, BLKQ, WARPQ, _tensor_layout)
+
     if km is not None:
         km = km.squeeze(1) if _tensor_layout == 0 else km.squeeze(2)
-        sageattn_custom_ops.quant_per_block_int8_fuse_sub_mean_cuda(k, km, k_int8, k_scale, 64, _tensor_layout)
-    # else:
-    #     sageattn_custom_ops.quant_per_block_int8_cuda(k, k_int8, k_scale, 64, _tensor_layout)
+        sageattn_custom_ops.quant_per_block_int8_fuse_sub_mean_cuda(k, km, k_int8, k_scale, BLKK, _tensor_layout)
+    else:
+        sageattn_custom_ops.quant_per_block_int8_cuda(k, k_int8, k_scale, BLKK, _tensor_layout)
     
     return q_int8, q_scale, k_int8, k_scale
 

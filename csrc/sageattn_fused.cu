@@ -84,6 +84,7 @@ __global__ void QuantInt8Kernel(T *__restrict__ input, T *__restrict__ mean, int
   if constexpr (sub_mean)
   {
     // *(float4*)(&mean_val[0]) = *(float4*)(mean_ptr_base);
+    // for unable-align reasons, we unroll it manually.
 #pragma unroll
     for (int ii = 0; ii < 8; ii++) {
       mean_val[ii] = mean_ptr_base[ii];
@@ -104,6 +105,7 @@ __global__ void QuantInt8Kernel(T *__restrict__ input, T *__restrict__ mean, int
     if (thread_base_token + i * iter_stride < num_tokens)
     {
       // *(float4*)(&x_val[i][0]) = *(float4*)(input_ptr_base + i * iter_stride * stride_seq_input);
+      // for unable-align reasons, we unroll it manually.
 #pragma unroll
       for (int ii = 0; ii < 8; ii++) {
         x_val[i][ii] = *(input_ptr_base + i * iter_stride * stride_seq_input + ii);
@@ -246,6 +248,7 @@ __global__ void TransposePadPermuteKernel(T *__restrict__ input, T *__restrict__
   __syncthreads();
 
   // *(float4*)(output_ptr_base) = *(float4*)(&shared_store[thread_id / num_threads_per_cta][thread_id % num_threads_per_cta * pack_size]);
+  // for unable-align reasons, we unroll it manually.
 #pragma unroll
   for (int i = 0; i < 8; i++) {
     *(output_ptr_base + i) = shared_store[thread_id / num_threads_per_cta][thread_id % num_threads_per_cta * pack_size + i];  // TODO: not debugged, maybe some problem
@@ -520,45 +523,187 @@ void quant_per_warp_int8_cuda_fwd(
   auto input_dtype = input.dtype();
 
   DISPATCH_PADDLE_DTYPE_TO_CTYPE_FP16(input_dtype, c_type, {
-    // DISPATCH_HEAD_DIM(head_dim, HEAD_DIM, {
-
-    //   CHECK_SHAPE(output, input.shape()[0], input.shape()[1], 
-    //             input.shape()[2], input.shape()[3]);
-    //   CHECK_SHAPE(scale, batch_size, num_heads, (num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE * (BLOCK_SIZE / WARP_BLOCK_SIZE));
-
-    //   dim3 grid((num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE * (BLOCK_SIZE / WARP_BLOCK_SIZE), num_heads, batch_size);
-
-    //   constexpr int num_pack_per_thread = (WARP_BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024;
-
-    //   dim3 block(WARP_BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
-
-    //   QuantInt8Kernel<HEAD_DIM, WARP_BLOCK_SIZE, num_pack_per_thread, false, false, c_type><<<grid, block>>>(
-    //     reinterpret_cast<c_type*>(input.data()),
-    //     nullptr,
-    //     output.data<int8_t>(),
-    //     reinterpret_cast<float*>(scale.data()),
-    //     0.0,
-    //     num_tokens,
-    //     stride_bz_input, stride_seq_input, stride_h_input,
-    //     0, 0,
-    //     stride_bz_output, stride_seq_output, stride_h_output,
-    //     scale.strides()[0], scale.strides()[1]
-    //   );
-    // });
     DISPATCH_WARP_BLOCK_SIZE(warp_block_size, WARP_BLOCK_SIZE, {
-      DISPATCH_HEAD_DIM(head_dim, HEAD_DIM, {
-        CHECK_SHAPE(output, input.shape()[0], input.shape()[1], input.shape()[2], input.shape()[3]);
-        CHECK_SHAPE(scale, batch_size, num_heads, (num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE * (BLOCK_SIZE / WARP_BLOCK_SIZE));
-        dim3 grid((num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE * (BLOCK_SIZE / WARP_BLOCK_SIZE), num_heads, batch_size);
-        constexpr int num_pack_per_thread = (WARP_BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024;
-        dim3 block(WARP_BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
+      DISPATCH_BLOCK_SIZE(block_size, BLOCK_SIZE, {
+        DISPATCH_HEAD_DIM(head_dim, HEAD_DIM, {
+          CHECK_SHAPE(output, input.shape()[0], input.shape()[1], input.shape()[2], input.shape()[3]);
+          CHECK_SHAPE(scale, batch_size, num_heads, (num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE * (BLOCK_SIZE / WARP_BLOCK_SIZE));
+          dim3 grid((num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE * (BLOCK_SIZE / WARP_BLOCK_SIZE), num_heads, batch_size);
+          constexpr int num_pack_per_thread = (WARP_BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024;
+          dim3 block(WARP_BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
 
-        QuantInt8Kernel<HEAD_DIM, WARP_BLOCK_SIZE, num_pack_per_thread, false, false, c_type><<<grid, block>>>(
+          QuantInt8Kernel<HEAD_DIM, WARP_BLOCK_SIZE, num_pack_per_thread, false, false, c_type><<<grid, block>>>(
+            reinterpret_cast<c_type*>(input.data()),
+            nullptr,
+            output.data<int8_t>(),
+            reinterpret_cast<float*>(scale.data()),
+            0.0,
+            num_tokens,
+            stride_bz_input, stride_seq_input, stride_h_input,
+            0, 0,
+            stride_bz_output, stride_seq_output, stride_h_output,
+            scale.strides()[0], scale.strides()[1]
+          );
+        });
+      });
+    });
+  });
+}
+
+void quant_per_block_int8_cuda_scale_fwd(
+                paddle::Tensor& input,
+                paddle::Tensor& output,
+                paddle::Tensor& scale,
+                float sm_scale,
+                int block_size,
+                int tensor_layout)
+{
+  CHECK_CUDA(input);
+  CHECK_CUDA(output);
+  CHECK_CUDA(scale);
+  
+  CHECK_DTYPE(output, paddle::DataType::INT8);
+  CHECK_DTYPE(scale, paddle::DataType::FLOAT32);
+
+  CHECK_LASTDIM_CONTIGUOUS(input);
+  CHECK_CONTIGUOUS(output);
+  CHECK_CONTIGUOUS(scale);
+
+  CHECK_DIMS(input, 4);
+  CHECK_DIMS(output, 4);
+  CHECK_DIMS(scale, 3);
+
+  const int batch_size = input.shape()[0];
+  const int head_dim = input.shape()[3];
+
+  int stride_bz_input = input.strides()[0];
+  int stride_bz_output = output.strides()[0];
+
+  int num_tokens, num_heads;
+  int stride_seq_input, stride_h_input, stride_seq_output, stride_h_output;
+
+  if (tensor_layout == 0)
+  {
+    num_tokens = input.shape()[1];
+    num_heads = input.shape()[2];
+    stride_seq_input = input.strides()[1];
+    stride_h_input = input.strides()[2];
+    stride_seq_output = output.strides()[1];
+    stride_h_output = output.strides()[2];
+  }
+  else
+  {
+    num_tokens = input.shape()[2];
+    num_heads = input.shape()[1];
+    stride_seq_input = input.strides()[2];
+    stride_h_input = input.strides()[1];
+    stride_seq_output = output.strides()[2];
+    stride_h_output = output.strides()[1];
+  }
+
+  auto input_dtype = input.dtype();
+
+  DISPATCH_PADDLE_DTYPE_TO_CTYPE_FP16(input_dtype, c_type, {
+    DISPATCH_BLOCK_SIZE(block_size, BLOCK_SIZE, {
+      DISPATCH_HEAD_DIM(head_dim, HEAD_DIM, {
+
+        CHECK_SHAPE(output, input.shape()[0], input.shape()[1], input.shape()[2], input.shape()[3]);
+        CHECK_SHAPE(scale, batch_size, num_heads, (num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE);
+
+        dim3 grid((num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE, num_heads, batch_size);
+
+        constexpr int num_pack_per_thread = (BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024;
+
+        dim3 block(BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
+
+        QuantInt8Kernel<HEAD_DIM, BLOCK_SIZE, num_pack_per_thread, true, false, c_type><<<grid, block>>>(
           reinterpret_cast<c_type*>(input.data()),
           nullptr,
-          output.data_ptr<int8_t>(),
+          output.data<int8_t>(),
           reinterpret_cast<float*>(scale.data()),
-          0.0,
+          sm_scale,
+          num_tokens,
+          stride_bz_input, stride_seq_input, stride_h_input,
+          0, 0,
+          stride_bz_output, stride_seq_output, stride_h_output,
+          scale.strides()[0], scale.strides()[1]
+        );
+      });
+    });
+  });
+}
+
+void quant_per_block_int8_cuda_fwd(
+                paddle::Tensor& input,
+                paddle::Tensor& output,
+                paddle::Tensor& scale,
+                int block_size,
+                int tensor_layout)
+{
+  CHECK_CUDA(input);
+  CHECK_CUDA(output);
+  CHECK_CUDA(scale);
+  
+  CHECK_DTYPE(output, paddle::DataType::INT8);
+  CHECK_DTYPE(scale, paddle::DataType::FLOAT32);
+
+  CHECK_LASTDIM_CONTIGUOUS(input);
+  CHECK_CONTIGUOUS(output);
+  CHECK_CONTIGUOUS(scale);
+
+  CHECK_DIMS(input, 4);
+  CHECK_DIMS(output, 4);
+  CHECK_DIMS(scale, 3);
+
+  const int batch_size = input.shape()[0];
+  const int head_dim = input.shape()[3];
+
+  int stride_bz_input = input.strides()[0];
+  int stride_bz_output = output.strides()[0];
+
+  int num_tokens, num_heads;
+  int stride_seq_input, stride_h_input, stride_seq_output, stride_h_output;
+
+  if (tensor_layout == 0)
+  {
+    num_tokens = input.shape()[1];
+    num_heads = input.shape()[2];
+    stride_seq_input = input.strides()[1];
+    stride_h_input = input.strides()[2];
+    stride_seq_output = output.strides()[1];
+    stride_h_output = output.strides()[2];
+  }
+  else
+  {
+    num_tokens = input.shape()[2];
+    num_heads = input.shape()[1];
+    stride_seq_input = input.strides()[2];
+    stride_h_input = input.strides()[1];
+    stride_seq_output = output.strides()[2];
+    stride_h_output = output.strides()[1];
+  }
+
+  auto input_dtype = input.dtype();
+
+  DISPATCH_PADDLE_DTYPE_TO_CTYPE_FP16(input_dtype, c_type, {
+    DISPATCH_BLOCK_SIZE(block_size, BLOCK_SIZE, {
+      DISPATCH_HEAD_DIM(head_dim, HEAD_DIM, {
+
+        CHECK_SHAPE(output, input.shape()[0], input.shape()[1], input.shape()[2], input.shape()[3]);
+        CHECK_SHAPE(scale, batch_size, num_heads, (num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE);
+
+        dim3 grid((num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE, num_heads, batch_size);
+
+        constexpr int num_pack_per_thread = (BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024;
+
+        dim3 block(BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
+
+        QuantInt8Kernel<HEAD_DIM, BLOCK_SIZE, num_pack_per_thread, false, false, c_type><<<grid, block>>>(
+          reinterpret_cast<c_type*>(input.data()),
+          nullptr,
+          output.data<int8_t>(),
+          reinterpret_cast<float*>(scale.data()),
+          0.0f,
           num_tokens,
           stride_bz_input, stride_seq_input, stride_h_input,
           0, 0,

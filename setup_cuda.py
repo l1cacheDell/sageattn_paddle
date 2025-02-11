@@ -20,7 +20,7 @@ import warnings
 from setuptools import find_packages
 
 # Supported NVIDIA GPU architectures.
-SUPPORTED_ARCHS = {"8.0", "8.6", "8.7", "8.9", "9.0"}
+SUPPORTED_ARCHS = {"8.0", "8.6", "8.9", "9.0"}
 
 # Compiler flags.
 CXX_FLAGS = ["-g", "-O3", "-fopenmp", "-lgomp", "-std=c++17", "-DENABLE_BF16"]
@@ -33,7 +33,7 @@ NVCC_FLAGS = [
     "--threads=8",
     # "-Xptxas=-v",
     "-diag-suppress=174", # suppress the specific warning
-    # "-G"        # very important notice: you should turn this button off, when finish debuging
+    "-G"        # very important notice: you should turn this button off, when finish debuging
 ]
 
 ABI = 1
@@ -116,21 +116,27 @@ if not compute_capabilities:
 # Validate the NVCC CUDA version.
 if nvcc_cuda_version < Version("12.0"):
     raise RuntimeError("CUDA 12.0 or higher is required to build the package.")
-if nvcc_cuda_version < Version("12.4"):
-    if any(cc.startswith("8.9") for cc in compute_capabilities):
-        raise RuntimeError(
-            "CUDA 12.4 or higher is required for compute capability 8.9.")
+if nvcc_cuda_version < Version("12.4") and any(cc.startswith("8.9") for cc in compute_capabilities):
+    raise RuntimeError(
+        "CUDA 12.4 or higher is required for compute capability 8.9.")
+if nvcc_cuda_version < Version("12.3") and any(cc.startswith("9.0") for cc in compute_capabilities):
     if any(cc.startswith("9.0") for cc in compute_capabilities):
         raise RuntimeError(
-            "CUDA 12.4 or higher is required for compute capability 9.0.")
+            "CUDA 12.3 or higher is required for compute capability 9.0.")
 
 # Add target compute capabilities to NVCC flags.
 for capability in compute_capabilities:
     num = capability[0] + capability[2]
+    if num == "90":
+        num = num + "a"
     NVCC_FLAGS += ["-gencode", f"arch=compute_{num},code=sm_{num}"]
     if capability.endswith("+PTX"):
         NVCC_FLAGS += ["-gencode", f"arch=compute_{num},code=compute_{num}"]
+    print(f"compute_{num},code=sm_{num}")
 
+print("=========== VERY IMPORTANT NOTICE ===========")
+print("Please turn off the '-G' flag before building")
+print("=============================================")
 
 setup(
     name='sageattn_custom_ops',
@@ -139,7 +145,8 @@ setup(
             'csrc/sageattn.cc',
             'csrc/sageattn_qk_int_sv_f16_kernel.cu', 
             'csrc/sageattn_qk_int_sv_f8_kernel.cu',
-            'csrc/sageattn_fused.cu'
+            'csrc/sageattn_fused.cu',
+            'csrc/sageattn_qk_int_sv_f8_kernel_sm90.cu'
         ],
         extra_compile_args={
             "cc": ["-lcuda"],

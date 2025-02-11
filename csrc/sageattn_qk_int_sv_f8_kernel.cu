@@ -1,8 +1,3 @@
-
-/*
-    This file implements one attention kernel and 3 C++ API wrapper.
-*/
-
 #include <type_traits>
 
 #include "paddle/extension.h"
@@ -1056,7 +1051,7 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_fwd(
   return {lse};
 }
 
-std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_fwd(
+std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm89_fwd(
                     paddle::Tensor& query,
                     paddle::Tensor& key,
                     paddle::Tensor& value,
