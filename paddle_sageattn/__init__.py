@@ -1,1 +1,1 @@
-from .core import sageattn_qk_int8_pv_fp8_cuda
+from .core import sageattn_qk_int8_pv_fp8_cuda, sageattn_qk_int8_pv_fp8_cuda_sm90
