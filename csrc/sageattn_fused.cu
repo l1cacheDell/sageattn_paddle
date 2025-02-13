@@ -451,8 +451,6 @@ void quant_per_block_int8_fuse_sub_mean_cuda_fwd(
         constexpr int num_pack_per_thread = (BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024;
 
         dim3 block(BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
-        std::cout << "resources: " << (num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE << " " << num_heads << " " <<batch_size << std::endl;
-        std::cout << "block: " << BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread << std::endl;
 
         QuantInt8Kernel<HEAD_DIM, BLOCK_SIZE, num_pack_per_thread, false, true, c_type><<<grid, block>>>(
           reinterpret_cast<c_type*>(input.data()),
