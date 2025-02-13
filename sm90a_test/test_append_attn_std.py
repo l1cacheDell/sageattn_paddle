@@ -165,8 +165,8 @@ def test_append_c16_attention():
     for i in range(run_time + warm_up):
         if i == warm_up:
             s_time = time.time()
-        if i == run_time + warm_up - 1:
-            transformer_nvtx = nvtx.start_range(message="append_attn", color="red")
+        # if i == run_time + warm_up - 1:
+        transformer_nvtx = nvtx.start_range(message="append_attn", color="red")
         out = paddlenlp_ops.append_attention(
             qkv,
             cache_k,
@@ -214,8 +214,8 @@ def test_append_c16_attention():
             False,  # speculate_decoder
         )[0]
         paddle.device.synchronize()
-        if i == run_time + warm_up - 1:
-            nvtx.end_range(transformer_nvtx)
+        # if i == run_time + warm_up - 1:
+        nvtx.end_range(transformer_nvtx)
     # print(out)
     # out = paddle.reshape(out, [bsz, input_length, num_q_head, head_dim_qk])
     out = paddle.reshape(out, [1, -1])

@@ -49,12 +49,12 @@ if __name__ == '__main__':
 
     print("======= Bench: sage attn torch =======")
     for i in range(REPEAT_NUM): 
-        if i == REPEAT_NUM - 1:
-            transformer_nvtx = nvtx.start_range(message="SA_torch", color="red")
+        # if i == REPEAT_NUM - 1:
+        transformer_nvtx = nvtx.start_range(message="SA_torch", color="red")
         o_torch_sa = sageattn_qk_int8_pv_fp8_cuda_sm90a_torch(q, k, v, tensor_layout=tensor_layout, is_causal=is_causal, qk_quant_gran="per_warp", return_lse=return_lse, pv_accum_dtype="fp32+fp32")
         torch.cuda.synchronize()
-        if i == REPEAT_NUM - 1:
-            nvtx.end_range(transformer_nvtx)
+        # if i == REPEAT_NUM - 1:
+        nvtx.end_range(transformer_nvtx)
 
     torch.cuda.synchronize()
 
@@ -66,17 +66,17 @@ if __name__ == '__main__':
 
     print("======= Bench: flash attn v3 torch =======")
     for i in range(REPEAT_NUM): 
-        if i == REPEAT_NUM - 1:
-            transformer_nvtx = nvtx.start_range(message="FA3_torch", color="blue")
+        # if i == REPEAT_NUM - 1:
+        transformer_nvtx = nvtx.start_range(message="FA3_torch", color="blue")
         o_torch_fa3, _ = flash_attn_func_v3(q, k, v, causal=is_causal)
         torch.cuda.synchronize()
-        if i == REPEAT_NUM - 1:
-            nvtx.end_range(transformer_nvtx)
+        # if i == REPEAT_NUM - 1:
+        nvtx.end_range(transformer_nvtx)
 
     torch.cuda.synchronize()
 
     sim_from_paddle_sa, l1_from_paddle_sa, max_diff = precision_cmp_torch(o_torch_sa, o_torch_fa3)
-    logger.debug(f"Cos sim: {sim_from_paddle_sa}, L1: {l1_from_paddle_sa}, Max Diff: {max_diff.item()}")
+    logger.debug(f"Torch SA Cos sim: {sim_from_paddle_sa}, L1: {l1_from_paddle_sa}, Max Diff: {max_diff.item()}")
 
     # phase 3: test SA paddle impl
     q_npy = q.cpu().numpy()
@@ -97,17 +97,17 @@ if __name__ == '__main__':
 
     print("======= Bench: sage attn paddle =======")
     for i in range(REPEAT_NUM): 
-        if i == REPEAT_NUM - 1:
-            transformer_nvtx = nvtx.start_range(message="SA_paddle", color="green")
+        # if i == REPEAT_NUM - 1:
+        transformer_nvtx = nvtx.start_range(message="SA_paddle", color="green")
         o_paddle_sa = sageattn_qk_int8_pv_fp8_cuda_sm90a_paddle(q_paddle, k_paddle, v_paddle, tensor_layout=tensor_layout, is_causal=is_causal, qk_quant_gran="per_warp", return_lse=return_lse, pv_accum_dtype="fp32+fp32")
         paddle.device.synchronize()
-        if i == REPEAT_NUM - 1:
-            nvtx.end_range(transformer_nvtx)
+        # if i == REPEAT_NUM - 1:
+        nvtx.end_range(transformer_nvtx)
 
     paddle.device.synchronize()
 
     sim_from_paddle_sa, l1_from_paddle_sa, max_diff = precision_cmp(o_torch_fa3, o_paddle_sa)
-    logger.debug(f"Cos sim: {sim_from_paddle_sa}, L1: {l1_from_paddle_sa}, Max Diff: {max_diff.item()}")
+    logger.debug(f"Paddle SA Cos sim: {sim_from_paddle_sa}, L1: {l1_from_paddle_sa}, Max Diff: {max_diff.item()}")
 
     # save it for phase 4: append_attn
     input_dir = './inputs'
