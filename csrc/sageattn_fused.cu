@@ -83,12 +83,12 @@ __global__ void QuantInt8Kernel(T *__restrict__ input, T *__restrict__ mean, int
 
   if constexpr (sub_mean)
   {
-    // *(float4*)(&mean_val[0]) = *(float4*)(mean_ptr_base);
+    *(float4*)(&mean_val[0]) = *(float4*)(mean_ptr_base);
     // for unable-align reasons, we unroll it manually.
-#pragma unroll
-    for (int ii = 0; ii < 8; ii++) {
-      mean_val[ii] = mean_ptr_base[ii];
-    }
+// #pragma unroll
+//     for (int ii = 0; ii < 8; ii++) {
+//       mean_val[ii] = mean_ptr_base[ii];
+//     }
 
 #pragma unroll
     for (uint32_t j = 0; j < 8; j++)
@@ -104,12 +104,12 @@ __global__ void QuantInt8Kernel(T *__restrict__ input, T *__restrict__ mean, int
   {
     if (thread_base_token + i * iter_stride < num_tokens)
     {
-      // *(float4*)(&x_val[i][0]) = *(float4*)(input_ptr_base + i * iter_stride * stride_seq_input);
+      *(float4*)(&x_val[i][0]) = *(float4*)(input_ptr_base + i * iter_stride * stride_seq_input);
       // for unable-align reasons, we unroll it manually.
-#pragma unroll
-      for (int ii = 0; ii < 8; ii++) {
-        x_val[i][ii] = *(input_ptr_base + i * iter_stride * stride_seq_input + ii);
-      }
+// #pragma unroll
+//       for (int ii = 0; ii < 8; ii++) {
+//         x_val[i][ii] = *(input_ptr_base + i * iter_stride * stride_seq_input + ii);
+//       }
 #pragma unroll
       for (uint32_t j = 0; j < 8; j++)
       {
@@ -247,12 +247,12 @@ __global__ void TransposePadPermuteKernel(T *__restrict__ input, T *__restrict__
 
   __syncthreads();
 
-  // *(float4*)(output_ptr_base) = *(float4*)(&shared_store[thread_id / num_threads_per_cta][thread_id % num_threads_per_cta * pack_size]);
+  *(float4*)(output_ptr_base) = *(float4*)(&shared_store[thread_id / num_threads_per_cta][thread_id % num_threads_per_cta * pack_size]);
   // for unable-align reasons, we unroll it manually.
-#pragma unroll
-  for (int i = 0; i < 8; i++) {
-    *(output_ptr_base + i) = shared_store[thread_id / num_threads_per_cta][thread_id % num_threads_per_cta * pack_size + i];  // TODO: not debugged, maybe some problem
-  }
+// #pragma unroll
+//   for (int i = 0; i < 8; i++) {
+//     *(output_ptr_base + i) = shared_store[thread_id / num_threads_per_cta][thread_id % num_threads_per_cta * pack_size + i];  // TODO: not debugged, maybe some problem
+//   }
 }
 
 template<uint32_t pad_size, bool sub_mean = false, typename T>
@@ -290,11 +290,11 @@ __global__ void MeanScaleKernel(T *__restrict__ input, int8_t *__restrict__ outp
 
   for (int i = 0; i < num_iters; i++)
   {
-    // *(float4*)(&x_val[0]) = *(float4*)(input_ptr_base + i * gmem_stride);
-#pragma unroll
-    for (int ii = 0; ii < 8; ii++) {
-      x_val[ii] = *(input_ptr_base + i * gmem_stride + ii); // TODO: not debugged
-    }
+    *(float4*)(&x_val[0]) = *(float4*)(input_ptr_base + i * gmem_stride);
+// #pragma unroll
+//     for (int ii = 0; ii < 8; ii++) {
+//       x_val[ii] = *(input_ptr_base + i * gmem_stride + ii); // TODO: not debugged
+//     }
 #pragma unroll
     for (uint32_t j = 0; j < 8; j++)
     {
@@ -350,11 +350,11 @@ __global__ void MeanScaleKernel(T *__restrict__ input, int8_t *__restrict__ outp
 
   for (int i = 0; i < num_iters; i++)
   {
-    // *(float4*)(&x_val[0]) = *(float4*)(input_ptr_base + i * gmem_stride);
-#pragma unroll
-    for (int ii = 0; ii < 8; ii++) {
-      x_val[ii] = *(input_ptr_base + i * gmem_stride + ii); // TODO: not debugged
-    }
+    *(float4*)(&x_val[0]) = *(float4*)(input_ptr_base + i * gmem_stride);
+// #pragma unroll
+//     for (int ii = 0; ii < 8; ii++) {
+//       x_val[ii] = *(input_ptr_base + i * gmem_stride + ii); // TODO: not debugged
+//     }
 #pragma unroll
     for (uint32_t j = 0; j < 8; j++)
     {
