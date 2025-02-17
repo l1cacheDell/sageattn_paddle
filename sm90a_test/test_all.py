@@ -78,12 +78,38 @@ if __name__ == '__main__':
     sim_from_paddle_sa, l1_from_paddle_sa, max_diff = precision_cmp_torch(o_torch_sa, o_torch_fa3)
     logger.debug(f"Torch SA Cos sim: {sim_from_paddle_sa}, L1: {l1_from_paddle_sa}, Max Diff: {max_diff.item()}")
 
-    # phase 3: test SA paddle impl
+    # save for paddle, torch fp16
     q_npy = q.cpu().numpy()
     k_npy = k.cpu().numpy()
     v_npy = v.cpu().numpy()
 
     o_npy = o_torch_sa.cpu().numpy()
+
+    # phase 3: test FA3 FP8 official
+    print("======= Warm up flash attn v3 FP8 torch =======")
+    q = q.to(dtype=torch.float8_e4m3fn)
+    k = k.to(dtype=torch.float8_e4m3fn)
+    v = v.to(dtype=torch.float8_e4m3fn)
+    descale_q = torch.tensor([1.0], dtype=torch.float32, device="cuda")
+    descale_k = torch.tensor([1.0], dtype=torch.float32, device="cuda")
+    descale_v = torch.tensor([1.0], dtype=torch.float32, device="cuda")
+    for i in range(WARMUP_NUM): o_torch_fa3_fp8, _ = flash_attn_func_v3(q, k, v, 1 / head_dim**0.5, causal=is_causal, descale_q=descale_q, descale_k=descale_k, descale_v=descale_v)
+
+    torch.cuda.synchronize()
+
+    print("======= Bench: flash attn v3 FP8 torch =======")
+    for i in range(REPEAT_NUM): 
+        # if i == REPEAT_NUM - 1:
+        transformer_nvtx = nvtx.start_range(message="FA3_FP8_torch", color="blue")
+        o_torch_fa3_fp8, _ = flash_attn_func_v3(q, k, v, 1 / head_dim**0.5, causal=is_causal, descale_q=descale_q, descale_k=descale_k, descale_v=descale_v)
+        torch.cuda.synchronize()
+        # if i == REPEAT_NUM - 1:
+        nvtx.end_range(transformer_nvtx)
+
+    torch.cuda.synchronize()
+
+    # phase 4: test SA paddle impl
+
 
     q_paddle = paddle.to_tensor(q_npy, dtype=paddle.float16)
     k_paddle = paddle.to_tensor(k_npy, dtype=paddle.float16)
