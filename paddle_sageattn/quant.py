@@ -100,7 +100,6 @@ def per_channel_fp8(
         b, kv_len, h_kv, head_dim = v.shape
         padded_len = (kv_len + 63) // 64 * 64
         v_transposed_permutted = paddle.empty((b, head_dim, h_kv, padded_len), dtype=v.dtype)
-    
     sageattn_custom_ops.transpose_pad_permute_cuda(v, v_transposed_permutted, _tensor_layout)
 
     v_fp8 = paddle.empty(v_transposed_permutted.shape, dtype=paddle.float8_e4m3fn)

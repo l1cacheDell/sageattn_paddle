@@ -1,5 +1,8 @@
 #!/bin/bash
 
+export PATH=/usr/local/cuda-12.4/bin:$PATH
+nvcc -V
+
 pip uninstall sageattn_custom_ops -y
 rm -rf ./build
 rm -rf ./dist

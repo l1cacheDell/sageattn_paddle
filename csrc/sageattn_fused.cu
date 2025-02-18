@@ -441,7 +441,7 @@ void quant_per_block_int8_fuse_sub_mean_cuda_fwd(
 
   DISPATCH_PADDLE_DTYPE_TO_CTYPE_FP16(input_dtype, c_type, {
     DISPATCH_BLOCK_SIZE(block_size, BLOCK_SIZE, {
-      DISPATCH_HEAD_DIM(head_dim, HEAD_DIM, {
+      DISPATCH_HEAD_DIM_QK(head_dim, HEAD_DIM, {
         CHECK_SHAPE(mean, batch_size, num_heads, head_dim);
         CHECK_SHAPE(output, input.shape()[0], input.shape()[1], input.shape()[2], input.shape()[3]);
         CHECK_SHAPE(scale, batch_size, num_heads, (num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE);
@@ -525,7 +525,7 @@ void quant_per_warp_int8_cuda_fwd(
   DISPATCH_PADDLE_DTYPE_TO_CTYPE_FP16(input_dtype, c_type, {
     DISPATCH_WARP_BLOCK_SIZE(warp_block_size, WARP_BLOCK_SIZE, {
       DISPATCH_BLOCK_SIZE(block_size, BLOCK_SIZE, {
-        DISPATCH_HEAD_DIM(head_dim, HEAD_DIM, {
+        DISPATCH_HEAD_DIM_QK(head_dim, HEAD_DIM, {
           CHECK_SHAPE(output, input.shape()[0], input.shape()[1], input.shape()[2], input.shape()[3]);
           CHECK_SHAPE(scale, batch_size, num_heads, (num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE * (BLOCK_SIZE / WARP_BLOCK_SIZE));
           dim3 grid((num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE * (BLOCK_SIZE / WARP_BLOCK_SIZE), num_heads, batch_size);
@@ -775,7 +775,7 @@ void transpose_pad_permute_cuda_fwd(
     DISPATCH_HEAD_DIM(head_dim, HEAD_DIM, {
       dim3 grid(padded_num_tokens / CTA_SIZE, num_heads, batch_size);
 
-      static_assert(CTA_SIZE * HEAD_DIM <= 8192);
+      // static_assert(CTA_SIZE * HEAD_DIM <= 8192);  // cancel for deepseek 192 support
 
       dim3 block(CTA_SIZE * (HEAD_DIM / 8));
 
