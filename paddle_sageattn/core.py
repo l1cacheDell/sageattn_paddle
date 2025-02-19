@@ -226,7 +226,6 @@ def sageattn_qk_int8_pv_fp8_cuda_dsk_sm90(
         q_int8, q_scale, k_int8, k_scale = per_warp_int8_cuda(q, k, km, tensor_layout=tensor_layout, BLKQ=64, WARPQ=16, BLKK=128)
 
     o = paddle.empty(v.shape, dtype=dtype)
-    print(o.shape)
 
     kv_len = k.shape[seq_dim]
     v_pad_len = 128 - (kv_len % 128) if kv_len % 128 != 0 else 0
@@ -237,8 +236,14 @@ def sageattn_qk_int8_pv_fp8_cuda_dsk_sm90(
             v = paddle.concat([v, paddle.zeros(shape=[v.shape[0], v_pad_len, v.shape[2], v.shape[3]], dtype=v.dtype)], axis=1)
 
     v_fp8, v_scale, _ = per_channel_fp8(v, tensor_layout=tensor_layout, smooth_v=False)
+    q_int8_nope, q_int8_pe = q_int8.split(
+        [128, 64], axis=-1
+    )
+    k_int8_nope, k_int8_pe = k_int8.split(
+        [128, 64], axis=-1
+    )
 
-    lse = sageattn_custom_ops.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm90(q_int8, k_int8, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_caual, _qk_quant_gran, sm_scale, _return_lse)
+    lse = sageattn_custom_ops.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90(q_int8_nope, k_int8_nope, q_int8_pe, k_int8_pe, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_caual, _qk_quant_gran, sm_scale, _return_lse)
 
     o = o[..., :head_dim_og]
 

@@ -715,6 +715,7 @@ void quant_per_block_int8_cuda_fwd(
   });
 }
 
+// quant v用，但是v不是192，所以可以沿用原来的DISPATCH_HEAD_DIM
 void transpose_pad_permute_cuda_fwd(
                 paddle::Tensor& input,
                 paddle::Tensor& output,
@@ -775,7 +776,7 @@ void transpose_pad_permute_cuda_fwd(
     DISPATCH_HEAD_DIM(head_dim, HEAD_DIM, {
       dim3 grid(padded_num_tokens / CTA_SIZE, num_heads, batch_size);
 
-      // static_assert(CTA_SIZE * HEAD_DIM <= 8192);  // cancel for deepseek 192 support
+      static_assert(CTA_SIZE * HEAD_DIM <= 8192);
 
       dim3 block(CTA_SIZE * (HEAD_DIM / 8));
 
@@ -867,6 +868,7 @@ void scale_fuse_quant_cuda_fwd(
   });
 }
 
+// smooth v
 void mean_scale_fuse_quant_cuda_fwd(
                 paddle::Tensor& input,
                 paddle::Tensor& output,

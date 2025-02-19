@@ -146,7 +146,8 @@ setup(
             'csrc/sageattn_qk_int_sv_f16_kernel.cu', 
             'csrc/sageattn_qk_int_sv_f8_kernel.cu',
             'csrc/sageattn_fused.cu',
-            'csrc/sageattn_qk_int_sv_f8_dsk_kernel_sm90.cu'
+            'csrc/sageattn_qk_int_sv_f8_kernel_sm90.cu',
+            'csrc/sageattn_qk_int_sv_f8_dsk_kernel_sm90.cu',
         ],
         extra_compile_args={
             "cc": ["-lcuda"],
