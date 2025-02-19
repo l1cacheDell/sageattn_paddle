@@ -317,6 +317,7 @@ __global__ void qk_int8_sv_f8_attn_dsk_kernel(const __grid_constant__ CUtensorMa
         for (uint32_t k = 0; k < 8; k++)
         {
           RS_f32[fq][fk][k] = __int2float_rz(RS[fq][fk][k] + RS_pe[fq][fk][k]); // add one line
+          // RS_f32[fq][fk][k] = __int2float_rz(RS[fq][fk][k]);
         }
       }
     }
@@ -422,6 +423,7 @@ __global__ void qk_int8_sv_f8_attn_dsk_kernel(const __grid_constant__ CUtensorMa
         for (uint32_t k = 0; k < 8; k++)
         {
           RS_f32[fq][fk][k] = __int2float_rz(RS[fq][fk][k] + RS_pe[fq][fk][k]) * dequant_scale;
+          // RS_f32[fq][fk][k] = __int2float_rz(RS[fq][fk][k]) * dequant_scale;
         }
       }
     }
@@ -625,7 +627,7 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_attn_inst_buf_dsk_sm90_fwd(
   CHECK_DIMS(key_scale, 3);
 
   const int batch_size = query.shape()[0];
-  const int head_dim = query.shape()[3];
+  const int head_dim = query.shape()[3];  // 现在query是正常的128， 多出来的64在query_pe里面，所以这样做没什么问题
 
   int stride_bz_q = query.strides()[0];
   int stride_bz_k = key.strides()[0];
@@ -733,7 +735,7 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_attn_inst_buf_dsk_sm90_fwd(
 
           auto* kernel = qk_int8_sv_f8_attn_dsk_kernel<CTA_Q, CTA_K, NUM_THREADS, HEAD_DIM, HEAD_DIM_PE, static_cast<QuantGranularity>(QK_QUANT_GRAN), static_cast<QuantGranularity>(QK_QUANT_GRAN), DTypeOut, mask_mode, false>;
           size_t sMemSize = CTA_Q * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t);
-          sMemSize += CTA_Q * HEAD_DIM_PE * sizeof(int8_t) + CTA_K * HEAD_DIM_PE * sizeof(int8_t);
+          sMemSize += CTA_Q * HEAD_DIM_PE * sizeof(int8_t) + CTA_K * HEAD_DIM_PE * sizeof(int8_t);  // add extra space for qk pe
           cudaFuncSetAttribute(
               kernel,
               cudaFuncAttributeMaxDynamicSharedMemorySize, sMemSize);

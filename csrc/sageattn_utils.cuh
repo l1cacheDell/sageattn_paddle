@@ -2410,13 +2410,13 @@ __device__ __forceinline__ uint64_t matrix_descriptor_encode(uint64_t x) { retur
 
 template <int stride, typename T>
 __device__ uint64_t make_smem_desc(T* ptr) {
-    static_assert(stride == 32 || stride == 64 || stride == 128 || stride == 192);
+    static_assert(stride == 32 || stride == 64 || stride == 128);
     uint32_t addr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr));
     uint64_t desc = 0x0000000000000000;
     desc |= matrix_descriptor_encode(addr);
     desc |= matrix_descriptor_encode((uint64_t)16) << 16;
     desc |= matrix_descriptor_encode((uint64_t)(8 * stride)) << 32;
-    desc |= ((stride == 128) ? 1llu : (stride == 64) ? 2llu : (stride == 192) ? 4llu : 3llu) << 62;
+    desc |= ((stride == 128) ? 1llu : (stride == 64) ? 2llu : 3llu) << 62;
     return desc;
 }
 
