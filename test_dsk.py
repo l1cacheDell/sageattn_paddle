@@ -26,7 +26,7 @@ torch.backends.cuda.enable_flash_sdp(True)
 
 q = torch.randn((bsz, seq_len, num_heads, head_dim_qk), dtype=torch.float16).cuda()
 k = torch.randn((bsz, seq_len, num_heads, head_dim_qk), dtype=torch.float16).cuda()
-v = torch.randn((bsz, seq_len, num_heads, head_dim_qk), dtype=torch.float16).cuda()
+v = torch.randn((bsz, seq_len, num_heads, head_dim_v), dtype=torch.float16).cuda()
 q = q.transpose(2, 1)
 k = k.transpose(2, 1)
 v = v.transpose(2, 1)
@@ -63,3 +63,6 @@ sim, l1, max_diff = precision_cmp_paddle(o_paddle, o_paddle_sa)
 print(f"{sim}, {max_diff}")
 
 sim, l1, max_diff = precision_cmp_torch(o_torch_fa2, o_torch_sdpa)
+print(f"{sim}, {max_diff}")
+
+print((o_paddle - o_paddle_sa)[0, 0, 0, -50:])
