@@ -245,6 +245,7 @@ def sageattn_qk_int8_pv_fp8_cuda_dsk_sm90(
 
     lse = sageattn_custom_ops.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90(q_int8_nope, k_int8_nope, q_int8_pe, k_int8_pe, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_caual, _qk_quant_gran, sm_scale, _return_lse)
 
+    head_dim_og = v.shape[-1]
     o = o[..., :head_dim_og]
 
     if return_lse:
