@@ -27,7 +27,7 @@ def sageattn_qk_int8_pv_fp8_cuda(
     assert q.dtype == k.dtype == v.dtype, "All tensors must have the same dtype."
 
     _tensor_layout = 0 if tensor_layout == "NHD" else 1
-    _is_caual = 1 if is_causal else 0
+    _is_causal = 1 if is_causal else 0
     _qk_quant_gran = 3 if qk_quant_gran == "per_thread" else 2
     _return_lse = 1 if return_lse else 0
     
@@ -76,7 +76,7 @@ def sageattn_qk_int8_pv_fp8_cuda(
         else:
             lse = sageattn_custom_ops.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn(q_int8, k_int8, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_caual, _qk_quant_gran, sm_scale, _return_lse)
     elif pv_accum_dtype == "fp32+fp32":
-        lse = sageattn_custom_ops.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm89(q_int8, k_int8, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_caual, _qk_quant_gran, sm_scale, _return_lse)
+        lse = sageattn_custom_ops.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm89(q_int8, k_int8, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse)
 
     o = o[..., :head_dim_og]
 
@@ -105,7 +105,7 @@ def sageattn_qk_int8_pv_fp8_cuda_sm90(
     assert q.dtype == k.dtype == v.dtype, "All tensors must have the same dtype."
 
     _tensor_layout = 0 if tensor_layout == "NHD" else 1
-    _is_caual = 1 if is_causal else 0
+    _is_causal = 1 if is_causal else 0
     _qk_quant_gran = 3 if qk_quant_gran == "per_thread" else 2
     _return_lse = 1 if return_lse else 0
 
@@ -155,7 +155,7 @@ def sageattn_qk_int8_pv_fp8_cuda_sm90(
     
     v_fp8, v_scale, _ = per_channel_fp8(v, tensor_layout=tensor_layout, smooth_v=False)
 
-    lse = sageattn_custom_ops.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm90(q_int8, k_int8, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_caual, _qk_quant_gran, sm_scale, _return_lse)
+    lse = sageattn_custom_ops.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm90(q_int8, k_int8, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse)
 
     o = o[..., :head_dim_og]
 
@@ -184,7 +184,7 @@ def sageattn_qk_int8_pv_fp8_cuda_dsk_sm90(
     assert q.dtype == k.dtype == v.dtype, "All tensors must have the same dtype."
 
     _tensor_layout = 0 if tensor_layout == "NHD" else 1
-    _is_caual = 1 if is_causal else 0
+    _is_causal = 1 if is_causal else 0
     _qk_quant_gran = 3 if qk_quant_gran == "per_thread" else 2
     _return_lse = 1 if return_lse else 0
 
@@ -243,7 +243,7 @@ def sageattn_qk_int8_pv_fp8_cuda_dsk_sm90(
         [128, 64], axis=-1
     )
 
-    lse = sageattn_custom_ops.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90(q_int8_nope, k_int8_nope, q_int8_pe, k_int8_pe, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_caual, _qk_quant_gran, sm_scale, _return_lse)
+    lse = sageattn_custom_ops.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90(q_int8_nope, k_int8_nope, q_int8_pe, k_int8_pe, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse)
 
     head_dim_og = v.shape[-1]
     o = o[..., :head_dim_og]

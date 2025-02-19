@@ -2,6 +2,7 @@ import paddle
 from paddle_sageattn import sageattn_qk_int8_pv_fp8_cuda_dsk_sm90 as sageattn_qk_int8_pv_fp8_cuda_sm90a_paddle
 # from flash_attn_interface import flash_attn_func as flash_attn_func_v3
 from torch.nn.functional import scaled_dot_product_attention as sdpa
+from sageattention import sageattn_qk_int8_pv_fp8_cuda_dsk_sm90 as sageattn_qk_int8_pv_fp8_cuda_sm90a
 
 from utils import precision_cmp_torch, precision_cmp, precision_cmp_paddle
 
@@ -38,6 +39,12 @@ torch.backends.cuda.enable_flash_sdp(False)
 o_torch_sdpa = sdpa(q, k, v, is_causal=is_causal)
 torch.cuda.synchronize()
 
+# try sage attn
+q = q.transpose(2, 1)
+k = k.transpose(2, 1)
+v = v.transpose(2, 1)
+o_torch_sa = sageattn_qk_int8_pv_fp8_cuda_sm90a(q, k, v, tensor_layout=tensor_layout, is_causal=is_causal, qk_quant_gran="per_warp", return_lse=return_lse, pv_accum_dtype="fp32+fp32")
+
 q_npy = q.cpu().numpy()
 k_npy = k.cpu().numpy()
 v_npy = v.cpu().numpy()
@@ -45,11 +52,11 @@ v_npy = v.cpu().numpy()
 o_npy = o_torch_fa2.cpu().numpy()
 
 q_paddle = paddle.to_tensor(q_npy, dtype=paddle.float16)
-q_paddle = paddle.transpose(q_paddle, [0, 2, 1, 3])
+# q_paddle = paddle.transpose(q_paddle, [0, 2, 1, 3])
 k_paddle = paddle.to_tensor(k_npy, dtype=paddle.float16)
-k_paddle = paddle.transpose(k_paddle, [0, 2, 1, 3])
+# k_paddle = paddle.transpose(k_paddle, [0, 2, 1, 3])
 v_paddle = paddle.to_tensor(v_npy, dtype=paddle.float16)
-v_paddle = paddle.transpose(v_paddle, [0, 2, 1, 3])
+# v_paddle = paddle.transpose(v_paddle, [0, 2, 1, 3])
 o_paddle = paddle.to_tensor(o_npy, dtype=paddle.float16)
 o_paddle = paddle.transpose(o_paddle, [0, 2, 1, 3])
 
@@ -62,7 +69,9 @@ paddle.device.synchronize()
 sim, l1, max_diff = precision_cmp_paddle(o_paddle, o_paddle_sa)
 print(f"{sim}, {max_diff}")
 
-sim, l1, max_diff = precision_cmp_torch(o_torch_fa2, o_torch_sdpa)
+sim, l1, max_diff = precision_cmp_torch(o_torch_fa2, o_torch_sa.transpose(2, 1))
 print(f"{sim}, {max_diff}")
+
+
 
 print((o_paddle - o_paddle_sa)[0, 0, 0, -50:])
