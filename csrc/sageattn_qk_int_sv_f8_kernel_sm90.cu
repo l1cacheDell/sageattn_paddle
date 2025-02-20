@@ -8,7 +8,7 @@ template <int BlockMajorSize, int BlockMinorSize, bool swizzle=true, CUtensorMap
 CUtensorMap create_tensor_map_4D(T* gmem_ptr, int d1, int d2, int d3, int d4, int stride1, int stride2, int stride3) {
     constexpr int smem_stride = BlockMinorSize * sizeof(T);
     static_assert(sizeof(T) == 2 || sizeof(T) == 1);
-    // static_assert(smem_stride == 32 || smem_stride == 64 || smem_stride == 128);
+    static_assert(smem_stride == 32 || smem_stride == 64 || smem_stride == 128);
     
     CUtensorMap tma_map;
     void* gmem_address = (void*)gmem_ptr;

@@ -2,7 +2,7 @@ import paddle
 import argparse
 import nvtx
 
-from paddle_sageattn import sageattn_qk_int8_pv_fp8_cuda
+from paddle_sageattn import sageattn_qk_int8_pv_fp8_cuda_sm90 as sageattn_qk_int8_pv_fp8_cuda
 from utils import precision_cmp_paddle
 
 parser = argparse.ArgumentParser(description='Benchmark QK Int8 PV FP16 CUDA')
@@ -58,7 +58,7 @@ for i in range(100):
 flops = 4 * num_heads * bsz * head_dim * seq_len * seq_len / (2 if is_casual else 1)
 print(f"is casual: {is_casual}, FLOPS: {flops}")
 
-cos, l1 = precision_cmp_paddle(o1, o2)
+cos, l1, max_diff = precision_cmp_paddle(o1, o2)
 print(f"cos: {cos}, l1: {l1}")
 
 ################################################################################################################################################################
@@ -91,5 +91,5 @@ for i in range(100):
 flops = 4 * num_heads * bsz * head_dim * seq_len * seq_len / (2 if is_casual else 1)
 print(f"is casual: {is_casual}, FLOPS: {flops}")
 
-cos, l1 = precision_cmp_paddle(o1, o2)
+cos, l1, max_diff = precision_cmp_paddle(o1, o2)
 print(f"cos: {cos}, l1: {l1}")

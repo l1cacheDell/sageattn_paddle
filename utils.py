@@ -11,7 +11,9 @@ def precision_cmp(t1: torch.Tensor, t2: paddle.Tensor):
     x_reshaped = paddle.reshape(x, [1, -1])
     xx_reshaped = paddle.reshape(xx, [1, -1])
     sim = paddle.nn.functional.cosine_similarity(x_reshaped, xx_reshaped).item()
-    
+    # sub_tensor = x - xx
+    # sum_out = paddle.sum(sub_tensor)
+    # print("sum out: ", sum_out.numpy())
     # 计算 L1 误差
     l1 = (paddle.abs(x - xx).sum() / paddle.abs(xx).sum()).item()
 
@@ -34,6 +36,12 @@ def precision_cmp_s(t1: torch.Tensor, t2: paddle.Tensor):
     xx_reshaped = paddle.reshape(xx, [1, -1])
     sim = paddle.nn.functional.cosine_similarity(x_reshaped, xx_reshaped).item()
     
+    # with open("log.txt", "w") as f:
+    #     tmp_tensor = x_reshaped - xx_reshaped
+    #     print(tmp_tensor.shape)
+    #     for i in range(9388928, 9388928+449):
+    #         f.write(str(tmp_tensor[0, i].numpy()) + "\n")
+
     # 计算 L1 误差
     l1 = (paddle.abs(x - xx).sum() / paddle.abs(xx).sum()).item()
 

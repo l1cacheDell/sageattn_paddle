@@ -169,7 +169,6 @@ def sageattn_qk_int8_pv_fp8_cuda_dsk_sm90(
     q: paddle.Tensor, 
     k: paddle.Tensor, 
     v: paddle.Tensor,
-    kInt8FromTorch: paddle.Tensor,
     tensor_layout: str = "HND",
     is_causal: bool = False,
     qk_quant_gran: str = "per_warp",
@@ -199,11 +198,10 @@ def sageattn_qk_int8_pv_fp8_cuda_dsk_sm90(
         q = paddle.nn.functional.pad(q, (0, 128 - head_dim_og))
         k = paddle.nn.functional.pad(k, (0, 128 - head_dim_og))
         v = paddle.nn.functional.pad(v, (0, 128 - head_dim_og))
-    elif head_dim_og > 128 and head_dim_og < 192:
-        q = paddle.nn.functional.pad(q, (0, 192 - head_dim_og))
-        k = paddle.nn.functional.pad(k, (0, 192 - head_dim_og))
-        # v = paddle.nn.functional.pad(v, (0, 128 - head_dim_og))
-    elif head_dim_og > 192:
+    elif head_dim_og > 128 and head_dim_og < 256:
+        q = paddle.nn.functional.pad(q, (0, 256 - head_dim_og))
+        k = paddle.nn.functional.pad(k, (0, 256 - head_dim_og))
+    elif head_dim_og > 256:
         raise ValueError(f"Unsupported head_dim: {head_dim_og}")
     
     assert q.strides[-1] == 1 and k.strides[-1] == 1 and v.strides[-1] == 1, "Last dim of qkv must be contiguous."
@@ -237,12 +235,19 @@ def sageattn_qk_int8_pv_fp8_cuda_dsk_sm90(
             v = paddle.concat([v, paddle.zeros(shape=[v.shape[0], v_pad_len, v.shape[2], v.shape[3]], dtype=v.dtype)], axis=1)
 
     v_fp8, v_scale, _ = per_channel_fp8(v, tensor_layout=tensor_layout, smooth_v=False)
-    q_int8_nope, q_int8_pe = q_int8.split(
-        [128, 64], axis=-1
-    )
-    k_int8_nope, k_int8_pe = kInt8FromTorch.split(
-        [128, 64], axis=-1
-    )
+    q_int8_nope, q_int8_pe, waste = q_int8.split([128, 64, 64], axis=-1)
+    k_int8_nope, k_int8_pe, _ = k_int8.split([128, 64, 64], axis=-1)
+
+    print(q_int8_nope.shape)
+    print(k_int8_nope.shape)
+    print(q_int8_pe.shape)
+    print(k_int8_pe.shape)
+    print(v_fp8.shape)
+    print(o.shape)
+    print(q_scale.shape)
+    print(k_scale.shape)
+    print(v_scale.shape)
+    
     lse = sageattn_custom_ops.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90(q_int8_nope, k_int8_nope, q_int8_pe, k_int8_pe, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse)
 
     head_dim_og = v.shape[-1]
@@ -251,4 +256,4 @@ def sageattn_qk_int8_pv_fp8_cuda_dsk_sm90(
     if return_lse:
         return o, lse / 1.44269504 + lse_correction * sm_scale if smooth_k else lse / 1.44269504
     else:
-        return o, q_int8, kInt8FromTorch, v_fp8, km, q_scale, k_scale, v_scale
+        return o

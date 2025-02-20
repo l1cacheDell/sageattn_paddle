@@ -83,7 +83,7 @@ __global__ void QuantInt8Kernel(T *__restrict__ input, T *__restrict__ mean, int
 
   if constexpr (sub_mean)
   {
-    *(float4*)(&mean_val[0]) = *(float4*)(mean_ptr_base);
+    *(float4*)(&mean_val[0]) = *(float4*)(mean_ptr_base); // 8 elements
 #pragma unroll
     for (uint32_t j = 0; j < 8; j++)
     {
@@ -427,7 +427,6 @@ void quant_per_block_int8_fuse_sub_mean_cuda_fwd(
   auto mean_dtype = mean.dtype();
 
   PD_CHECK(input_dtype == mean_dtype, "Input and mean must have the same data type");
-
   DISPATCH_PADDLE_DTYPE_TO_CTYPE_FP16(input_dtype, c_type, {
     DISPATCH_BLOCK_SIZE(block_size, BLOCK_SIZE, {
       DISPATCH_HEAD_DIM_QK(head_dim, HEAD_DIM, {
@@ -440,7 +439,6 @@ void quant_per_block_int8_fuse_sub_mean_cuda_fwd(
         constexpr int num_pack_per_thread = (BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024;
 
         dim3 block(BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
-
         QuantInt8Kernel<HEAD_DIM, BLOCK_SIZE, num_pack_per_thread, false, true, c_type><<<grid, block>>>(
           reinterpret_cast<c_type*>(input.data()),
           reinterpret_cast<c_type*>(mean.data()),

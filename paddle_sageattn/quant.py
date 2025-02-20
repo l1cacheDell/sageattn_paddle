@@ -53,8 +53,8 @@ def per_warp_int8(
     BLKK: int =64,
     tensor_layout: str ="HND"
 ):
-    q_int8 = paddle.empty(q.shape, dtype=paddle.int8)
-    k_int8 = paddle.empty(k.shape, dtype=paddle.int8)
+    q_int8 = paddle.empty(shape=q.shape, dtype=paddle.int8)
+    k_int8 = paddle.empty(shape=k.shape, dtype=paddle.int8)
 
     if tensor_layout == "HND":
         b, h_qo, qo_len, head_dim = q.shape
