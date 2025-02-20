@@ -929,7 +929,9 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_d
           cudaFuncSetAttribute(
               kernel,
               cudaFuncAttributeMaxDynamicSharedMemorySize, sMemSize);
-          
+          printf("All params: %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %f \n",
+            CTA_Q, CTA_K, NUM_THREADS, HEAD_DIM, HEAD_DIM_PE, QK_QUANT_GRAN, sMemSize, qo_len, num_qo_heads, 
+            batch_size, stride_bz_o, stride_h_o, stride_seq_o, kv_len, num_kv_groups, sm_scale);
           dim3 grid(div_ceil(qo_len, CTA_Q), num_qo_heads, batch_size);
           kernel<<<grid, NUM_THREADS, sMemSize>>>(
             tma_map_Q,
