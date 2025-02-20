@@ -169,6 +169,7 @@ def sageattn_qk_int8_pv_fp8_cuda_dsk_sm90(
     q: paddle.Tensor, 
     k: paddle.Tensor, 
     v: paddle.Tensor,
+    kInt8FromTorch: paddle.Tensor,
     tensor_layout: str = "HND",
     is_causal: bool = False,
     qk_quant_gran: str = "per_warp",
@@ -239,10 +240,9 @@ def sageattn_qk_int8_pv_fp8_cuda_dsk_sm90(
     q_int8_nope, q_int8_pe = q_int8.split(
         [128, 64], axis=-1
     )
-    k_int8_nope, k_int8_pe = k_int8.split(
+    k_int8_nope, k_int8_pe = kInt8FromTorch.split(
         [128, 64], axis=-1
     )
-
     lse = sageattn_custom_ops.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90(q_int8_nope, k_int8_nope, q_int8_pe, k_int8_pe, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse)
 
     head_dim_og = v.shape[-1]
@@ -251,4 +251,4 @@ def sageattn_qk_int8_pv_fp8_cuda_dsk_sm90(
     if return_lse:
         return o, lse / 1.44269504 + lse_correction * sm_scale if smooth_k else lse / 1.44269504
     else:
-        return o
+        return o, q_int8, kInt8FromTorch, v_fp8, km, q_scale, k_scale, v_scale

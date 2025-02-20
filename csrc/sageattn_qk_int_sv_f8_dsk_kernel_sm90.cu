@@ -317,7 +317,6 @@ __global__ void qk_int8_sv_f8_attn_dsk_kernel(const __grid_constant__ CUtensorMa
         for (uint32_t k = 0; k < 8; k++)
         {
           RS_f32[fq][fk][k] = __int2float_rz(RS[fq][fk][k] + RS_pe[fq][fk][k]); // add one line
-          // RS_f32[fq][fk][k] = __int2float_rz(RS[fq][fk][k]);
         }
       }
     }
@@ -423,7 +422,6 @@ __global__ void qk_int8_sv_f8_attn_dsk_kernel(const __grid_constant__ CUtensorMa
         for (uint32_t k = 0; k < 8; k++)
         {
           RS_f32[fq][fk][k] = __int2float_rz(RS[fq][fk][k] + RS_pe[fq][fk][k]) * dequant_scale;
-          // RS_f32[fq][fk][k] = __int2float_rz(RS[fq][fk][k]) * dequant_scale;
         }
       }
     }

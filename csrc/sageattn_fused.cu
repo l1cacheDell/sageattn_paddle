@@ -84,12 +84,6 @@ __global__ void QuantInt8Kernel(T *__restrict__ input, T *__restrict__ mean, int
   if constexpr (sub_mean)
   {
     *(float4*)(&mean_val[0]) = *(float4*)(mean_ptr_base);
-    // for unable-align reasons, we unroll it manually.
-// #pragma unroll
-//     for (int ii = 0; ii < 8; ii++) {
-//       mean_val[ii] = mean_ptr_base[ii];
-//     }
-
 #pragma unroll
     for (uint32_t j = 0; j < 8; j++)
     {
@@ -105,11 +99,6 @@ __global__ void QuantInt8Kernel(T *__restrict__ input, T *__restrict__ mean, int
     if (thread_base_token + i * iter_stride < num_tokens)
     {
       *(float4*)(&x_val[i][0]) = *(float4*)(input_ptr_base + i * iter_stride * stride_seq_input);
-      // for unable-align reasons, we unroll it manually.
-// #pragma unroll
-//       for (int ii = 0; ii < 8; ii++) {
-//         x_val[i][ii] = *(input_ptr_base + i * iter_stride * stride_seq_input + ii);
-//       }
 #pragma unroll
       for (uint32_t j = 0; j < 8; j++)
       {
