@@ -31,9 +31,10 @@ NVCC_FLAGS = [
     "-U__CUDA_NO_HALF_CONVERSIONS__",
     "--use_fast_math",
     "--threads=8",
-    # "-Xptxas=-v",
+    "-Xptxas=-v",
     "-diag-suppress=174", # suppress the specific warning
-    # "-G"        # very important notice: you should turn this button off, when finish debuging
+    # "-G",        # very important notice: you should turn this button off, when finish debuging
+    # "-g"
 ]
 
 ABI = 1
