@@ -141,15 +141,11 @@ print("Please turn off the '-G' flag before building")
 print("=============================================")
 
 setup(
-    name='sageattn_custom_ops',
+    name='sageattn_dsk_v2',
     ext_modules=[CUDAExtension(
         sources=[
-            'csrc/sageattn.cc',
-            'csrc/sageattn_qk_int_sv_f16_kernel.cu', 
-            'csrc/sageattn_qk_int_sv_f8_kernel.cu',
-            'csrc/sageattn_fused.cu',
-            'csrc/sageattn_qk_int_sv_f8_kernel_sm90.cu',
-            'csrc/sageattn_qk_int_sv_f8_dsk_kernel_sm90.cu',
+            'sageattn_dsk.cc',
+            'sageattn_dsk_kernel.cu',
         ],
         extra_compile_args={
             "cc": ["-lcuda"],

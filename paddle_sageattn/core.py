@@ -1,5 +1,6 @@
 import paddle
 import sageattn_custom_ops
+import sageattn_dsk_v2
 
 import sageattention
 
@@ -346,9 +347,15 @@ def sageattn_qk_int8_pv_fp8_cuda_dsk_sm90_test(
     # print(q_int8_nope.place)
     # print(q_int8_nope.dtype)
     # print(q_int8_pe[1, 0, 0, 0])
+    # q_int8_nope = q_int8_nope.detach().clone()
+    # q_int8_pe = q_int8_pe.detach().clone()
+    # k_int8_nope = k_int8_nope.detach().clone()
+    # k_int8_pe = k_int8_pe.detach().clone()
 
-    lse = sageattn_custom_ops.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90(q_int8_nope, k_int8_nope, q_int8_pe, k_int8_pe, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse)
-
+    # use two different custom api
+    # lse = sageattn_dsk_v2.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90(q_int8_nope, k_int8_nope, q_int8_pe, k_int8_pe, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse)
+    lse = sageattn_dsk_v2.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90_v2(q_int8_nope, k_int8_nope, q_int8_pe, k_int8_pe, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse)
+    
     head_dim_og = v.shape[-1]
     o = o[..., :head_dim_og]
 
