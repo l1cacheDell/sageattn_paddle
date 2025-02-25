@@ -25,6 +25,7 @@ SUPPORTED_ARCHS = {"8.0", "8.6", "8.9", "9.0"}
 # Compiler flags.
 CXX_FLAGS = ["-g", "-O3", "-fopenmp", "-lgomp", "-std=c++17", "-DENABLE_BF16"]
 NVCC_FLAGS = [
+    "-O3",
     "-std=c++17",
     "-U__CUDA_NO_HALF_OPERATORS__",
     "-U__CUDA_NO_HALF_CONVERSIONS__",
@@ -32,7 +33,6 @@ NVCC_FLAGS = [
     "--threads=8",
     "-Xptxas=-v",
     "-diag-suppress=174", # suppress the specific warning
-    "-O3",
     # "-O0",
     # "-G",        # very important notice: you should turn this button off, when finish debuging
     # "-g"
@@ -144,10 +144,9 @@ setup(
     name='sageattn_custom_ops',
     ext_modules=[CUDAExtension(
         sources=[
-            'csrc/sageattn.cc',
-            'csrc/sageattn_qk_int_sv_f16_kernel.cu', 
-            'csrc/sageattn_qk_int_sv_f8_kernel.cu',
             'csrc/sageattn_fused.cu',
+            'csrc/sageattn_qk_int_sv_f16_kernel_sm80.cu', 
+            'csrc/sageattn_qk_int_sv_f8_kernel_sm89.cu',
             'csrc/sageattn_qk_int_sv_f8_kernel_sm90.cu',
             'csrc/sageattn_qk_int_sv_f8_dsk_kernel_sm90.cu',
         ],

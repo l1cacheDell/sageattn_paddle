@@ -456,6 +456,13 @@ void quant_per_block_int8_fuse_sub_mean_cuda_fwd(
   });
 }
 
+PD_BUILD_OP(quant_per_block_int8_fuse_sub_mean_cuda)
+    .Inputs({"input", "mean", "output", "scale"})
+    .Outputs({"out1", "out2", "out3", "out4"})
+    .SetInplaceMap({{"input", "out1"}, {"mean", "out2"}, {"output", "out3"}, {"scale", "out4"}}) // Inplace
+    .Attrs({"block_size: int", "tensor_layout: int"})
+    .SetKernelFn(PD_KERNEL(quant_per_block_int8_fuse_sub_mean_cuda_fwd));
+
 void quant_per_warp_int8_cuda_fwd(
                 paddle::Tensor& input,
                 paddle::Tensor& output,
@@ -536,6 +543,13 @@ void quant_per_warp_int8_cuda_fwd(
     });
   });
 }
+
+PD_BUILD_OP(quant_per_warp_int8_cuda)
+    .Inputs({"input", "output", "scale"})
+    .Outputs({"out1", "out2", "out3"})
+    .SetInplaceMap({{"input", "out1"}, {"output", "out2"}, {"scale", "out3"}}) // Inplace
+    .Attrs({"block_size: int", "warp_block_size: int", "tensor_layout: int"})
+    .SetKernelFn(PD_KERNEL(quant_per_warp_int8_cuda_fwd));
 
 void quant_per_block_int8_cuda_scale_fwd(
                 paddle::Tensor& input,
@@ -620,6 +634,13 @@ void quant_per_block_int8_cuda_scale_fwd(
   });
 }
 
+PD_BUILD_OP(quant_per_block_int8_cuda_scale)
+    .Inputs({"input", "output", "scale"})
+    .Outputs({"out1", "out2", "out3"})
+    .SetInplaceMap({{"input", "out1"}, {"output", "out2"}, {"scale", "out3"}}) // Inplace
+    .Attrs({"sm_scale: float", "block_size: int", "tensor_layout: int"})
+    .SetKernelFn(PD_KERNEL(quant_per_block_int8_cuda_scale_fwd));
+
 void quant_per_block_int8_cuda_fwd(
                 paddle::Tensor& input,
                 paddle::Tensor& output,
@@ -702,6 +723,13 @@ void quant_per_block_int8_cuda_fwd(
   });
 }
 
+PD_BUILD_OP(quant_per_block_int8_cuda)
+    .Inputs({"input", "output", "scale"})
+    .Outputs({"out1", "out2", "out3"})
+    .SetInplaceMap({{"input", "out1"}, {"output", "out2"}, {"scale", "out3"}}) // Inplace
+    .Attrs({"sm_scale: float", "block_size: int", "tensor_layout: int"})
+    .SetKernelFn(PD_KERNEL(quant_per_block_int8_cuda_fwd));
+
 // quant v用，但是v不是192，所以可以沿用原来的DISPATCH_HEAD_DIM
 void transpose_pad_permute_cuda_fwd(
                 paddle::Tensor& input,
@@ -777,6 +805,13 @@ void transpose_pad_permute_cuda_fwd(
     });
   });
 }
+
+PD_BUILD_OP(transpose_pad_permute_cuda)
+    .Inputs({"input", "output"})
+    .Outputs({"out1", "out2"})
+    .SetInplaceMap({{"input", "out1"}, {"output", "out2"}}) // Inplace
+    .Attrs({"tensor_layout: int"})
+    .SetKernelFn(PD_KERNEL(transpose_pad_permute_cuda_fwd));
 
 void scale_fuse_quant_cuda_fwd(
                 paddle::Tensor& input,
@@ -854,6 +889,13 @@ void scale_fuse_quant_cuda_fwd(
     );
   });
 }
+
+PD_BUILD_OP(scale_fuse_quant_cuda)
+    .Inputs({"input", "output", "scale"})
+    .Outputs({"out1", "out2", "out3"})
+    .SetInplaceMap({{"input", "out1"}, {"output", "out2"}, {"scale", "out3"}}) // Inplace
+    .Attrs({"num_tokens: int", "scale_max: float", "tensor_layout: int"})
+    .SetKernelFn(PD_KERNEL(scale_fuse_quant_cuda_fwd));
 
 // smooth v
 void mean_scale_fuse_quant_cuda_fwd(
@@ -938,3 +980,10 @@ void mean_scale_fuse_quant_cuda_fwd(
     );
   });
 }
+
+PD_BUILD_OP(mean_scale_fuse_quant_cuda)
+    .Inputs({"input", "output", "mean", "scale"})
+    .Outputs({"out1", "out2", "out3", "out4"})
+    .SetInplaceMap({{"input", "out1"}, {"output", "out2"}, {"mean", "out3"}, {"scale", "out4"}}) // Inplace
+    .Attrs({"num_tokens: int", "scale_max: float", "tensor_layout: int"})
+    .SetKernelFn(PD_KERNEL(mean_scale_fuse_quant_cuda_fwd));

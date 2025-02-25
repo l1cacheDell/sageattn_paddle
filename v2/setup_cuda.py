@@ -32,10 +32,10 @@ NVCC_FLAGS = [
     "--threads=8",
     "-Xptxas=-v",
     "-diag-suppress=174", # suppress the specific warning
-    "-O3",
-    # "-O0",
-    # "-G",        # very important notice: you should turn this button off, when finish debuging
-    # "-g"
+    # "-O3",
+    "-O1",
+    "-G",        # very important notice: you should turn this button off, when finish debuging
+    "-g"
 ]
 
 ABI = 1

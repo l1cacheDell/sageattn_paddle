@@ -52,8 +52,7 @@ std::vector<paddle::DataType> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf
 PD_BUILD_OP(qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90_v2)
     .Inputs({"query", "key", "query_pe", "key_pe", "value", "output", "query_scale", "key_scale", "value_scale"})
     .Outputs({"out", "lse"})
-    .SetInplaceMap({
-                      {"output", "out"}}) // Inplace
+    .SetInplaceMap({{"output", "out"}}) // Inplace
     .Attrs({"tensor_layout: int",
             "is_causal: int",
             "qk_quant_gran: int",

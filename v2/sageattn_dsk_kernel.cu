@@ -47,9 +47,9 @@ __device__ __forceinline__ void expect_bytes(uint64_t* bar) {
 
 template <typename T>
 __device__ __forceinline__ void load_async_4D(T *dst, void const* const src_tma_map, uint64_t* bar, int s0, int s1, int s2, int s3) {
-    uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);
+    uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src_tma_map);  // misaligned
     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(bar));
-    uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(dst));
+    uint32_t dst_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(dst)); // misaligned
 
     asm volatile (
         "cp.async.bulk.tensor.4d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
@@ -107,7 +107,7 @@ __device__ __forceinline__ void arrive(uint64_t* bar) {
 // ======= kernel impl =======
 //
 
-template<uint32_t CTA_Q, uint32_t CTA_K, uint32_t NUM_THREADS, uint32_t head_dim, uint32_t head_dim_pe, 
+template<uint32_t CTA_Q, uint32_t CTA_K, uint32_t NUM_THREADS, uint32_t head_dim, uint32_t head_dim_pe, size_t sMemSize,
 QuantGranularity Q_GRAN, QuantGranularity K_GRAN, typename DTypeOut, MaskMode mask_mode = MaskMode::kNone, bool fuse_v_scale=false>
 __global__ void qk_int8_sv_f8_attn_dsk_kernel(const __grid_constant__ CUtensorMap tensorMapQ, 
                                         const __grid_constant__ CUtensorMap tensorMapK,
@@ -140,7 +140,7 @@ __global__ void qk_int8_sv_f8_attn_dsk_kernel(const __grid_constant__ CUtensorMa
 
   sm_scale *= math::log2e;
 
-  extern __shared__ __align__(128) int8_t smem_[];
+  __shared__ __align__(128) int8_t smem_[sMemSize];
 
   /* // original:
    * int8_t *sQ = (int8_t*)smem_;
@@ -163,7 +163,8 @@ __global__ void qk_int8_sv_f8_attn_dsk_kernel(const __grid_constant__ CUtensorMa
   float m[num_tiles_q][2];
   float d[num_tiles_q][2];
 
-  uint32_t q_scale_idx, k_scale_idx;
+  uint32_t q_scale_idx = 0;
+  uint32_t k_scale_idx = 0;
 
   // scale shape: (b, h_qo, (qo_len + BLKQ - 1) // BLKQ)
   if constexpr (Q_GRAN == QuantGranularity::kPerBlock)
@@ -250,6 +251,10 @@ __global__ void qk_int8_sv_f8_attn_dsk_kernel(const __grid_constant__ CUtensorMa
     load_async_4D(sV, &tensorMapV, &barrier_V, 0, 0, kv_head_id, batch_id);
     load_async_4D(sQ_pe, &tensorMapQ_pe, &barrier_Q_pe, 0, bx * CTA_Q, head_id, batch_id);
     load_async_4D(sK_pe, &tensorMapK_pe, &barrier_K_pe, 0, 0, kv_head_id, batch_id);
+  }
+
+  if (q_scale_idx >= 32762 / 2) {
+    printf("q_scale_idx: %d, gridDim.x: %d, num_qo_heads: %d, warp_idx: %d\n", q_scale_idx, gridDim.x, num_qo_heads, warp_idx);
   }
 
   float q_scale = Q_scale[q_scale_idx];
@@ -694,7 +699,7 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_d
     throw std::invalid_argument(err_msg.str());  
   }
 
-  paddle::Tensor lse = paddle::empty({0}, paddle::DataType::FLOAT32);
+  paddle::Tensor lse = paddle::empty({1}, paddle::DataType::FLOAT32);
   if (return_lse)
   {
     lse = paddle::empty({batch_size, num_qo_heads, qo_len}, paddle::DataType::FLOAT32);
@@ -735,14 +740,16 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_d
           CHECK_SHAPE(value_scale, batch_size, num_kv_heads, HEAD_DIM);
           CUtensorMap tma_map_Q = create_tensor_map_4D<CTA_Q, HEAD_DIM>(reinterpret_cast<int8_t*>(query.data()), batch_size, num_qo_heads, qo_len, HEAD_DIM, stride_bz_q, stride_h_q, stride_seq_q);
           CUtensorMap tma_map_Q_pe = create_tensor_map_4D<CTA_Q, HEAD_DIM_PE>(reinterpret_cast<int8_t*>(query_pe.data()), batch_size, num_qo_heads, qo_len, HEAD_DIM_PE, stride_bz_q, stride_h_q, stride_seq_q);
+          
           CUtensorMap tma_map_K = create_tensor_map_4D<CTA_K, HEAD_DIM>(reinterpret_cast<int8_t*>(key.data()), batch_size, num_kv_heads, kv_len, HEAD_DIM, stride_bz_k, stride_h_k, stride_seq_k);
           CUtensorMap tma_map_K_pe = create_tensor_map_4D<CTA_K, HEAD_DIM_PE>(reinterpret_cast<int8_t*>(key_pe.data()), batch_size, num_kv_heads, kv_len, HEAD_DIM_PE, stride_bz_k, stride_h_k, stride_seq_k);
 
           CUtensorMap tma_map_V = create_tensor_map_4D<HEAD_DIM, CTA_K>(reinterpret_cast<int8_t*>(value.data()), batch_size, num_kv_heads, HEAD_DIM, value.shape()[3], stride_bz_v, stride_h_v, stride_d_v);
 
-          auto* kernel = qk_int8_sv_f8_attn_dsk_kernel<CTA_Q, CTA_K, NUM_THREADS, HEAD_DIM, HEAD_DIM_PE, static_cast<QuantGranularity>(QK_QUANT_GRAN), static_cast<QuantGranularity>(QK_QUANT_GRAN), DTypeOut, mask_mode, true>;
-          size_t sMemSize = CTA_Q * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t);
-          sMemSize += CTA_Q * HEAD_DIM_PE * sizeof(int8_t) + CTA_K * HEAD_DIM_PE * sizeof(int8_t);
+          const size_t sMemSize = CTA_Q * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t) + CTA_Q * HEAD_DIM_PE * sizeof(int8_t) + CTA_K * HEAD_DIM_PE * sizeof(int8_t);
+
+          auto* kernel = qk_int8_sv_f8_attn_dsk_kernel<CTA_Q, CTA_K, NUM_THREADS, HEAD_DIM, HEAD_DIM_PE, sMemSize, static_cast<QuantGranularity>(QK_QUANT_GRAN), static_cast<QuantGranularity>(QK_QUANT_GRAN), DTypeOut, mask_mode, true>;
+          
           cudaFuncSetAttribute(
               kernel,
               cudaFuncAttributeMaxDynamicSharedMemorySize, sMemSize);

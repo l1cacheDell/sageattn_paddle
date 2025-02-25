@@ -1,5 +1,5 @@
 import paddle
-from paddle_sageattn import sageattn_qk_int8_pv_fp8_cuda_dsk_sm90 as sageattn_qk_int8_pv_fp8_cuda_sm90a_paddle
+from paddle_sageattn import sageattn_qk_int8_pv_fp8_cuda_dsk_sm90_test as sageattn_qk_int8_pv_fp8_cuda_sm90a_paddle
 
 from torch.nn.functional import scaled_dot_product_attention as sdpa
 from sageattention import sageattn_qk_int8_pv_fp8_cuda_dsk_sm90 as sageattn_qk_int8_pv_fp8_cuda_sm90a
@@ -14,8 +14,8 @@ import argparse
 import nvtx
 
 bsz = 2
-seq_len = 1024 * 2
-num_heads = 8
+seq_len = 1024
+num_heads = 128
 head_dim_qk = 128 + 64
 head_dim_v = 128
 
@@ -91,7 +91,7 @@ sm_scale = head_dim_og**-0.5
 
 for i in range(2):
     transformer_nvtx = nvtx.start_range(message='paddle', color='green')
-    o_paddle_sa = sageattn_qk_int8_pv_fp8_cuda_sm90a_paddle(q_paddle, k_paddle, v_paddle, 
+    o_paddle_sa = sageattn_qk_int8_pv_fp8_cuda_sm90a_paddle(q_paddle, k_paddle, v_paddle, qInt8_paddle, kInt8_paddle, vFp8_paddle, qScale_paddle, kScale_paddle, vScale_paddle, 
                     tensor_layout=tensor_layout, is_causal=is_causal, qk_quant_gran="per_warp", return_lse=return_lse, pv_accum_dtype="fp32+fp32")
     paddle.device.synchronize()
     nvtx.end_range(transformer_nvtx)

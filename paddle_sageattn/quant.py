@@ -113,3 +113,18 @@ def per_channel_fp8(
     else:
         sageattn_custom_ops.scale_fuse_quant_cuda(v_transposed_permutted, v_fp8, v_scale, kv_len, scale_max, _tensor_layout)
         return v_fp8, v_scale, None
+    
+
+def sub_mean(
+    v: paddle.Tensor, 
+    tensor_layout: str ="HND"
+):
+    _tensor_layout = 0 if tensor_layout == "NHD" else 1
+    vm = v.mean(dim=1 if _tensor_layout == 0 else 2)
+
+    v_smoothed = paddle.empty(v.shape, dtype=paddle.float16)
+    
+    # subtract mean and store the result as fp16
+    sageattn_custom_ops.sub_mean_cuda(v, vm, v_smoothed, _tensor_layout)
+
+    return v_smoothed, vm
