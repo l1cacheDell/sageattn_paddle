@@ -435,13 +435,13 @@ def sageattn_qk_int8_pv_fp8_cuda_dsk_sm90_test(
     # k_int8_pe = k_int8_pe.detach().clone()
 
     # use two different custom api
-    print(f"q int8 shape: {q_int8_nope.shape}, dtype: {q_int8_nope.dtype}, q scale shape: {q_scale.shape}")
-    print(f"k int8 shape: {k_int8_nope.shape}, dtype: {k_int8_nope.dtype}, k scale shape: {k_scale.shape}")
-    print(f"v fp8 shape: {v_fp8.shape}, dtype: {v_fp8.dtype}, v scale shape: {v_scale.shape}")
-    print(f"q int8 pe shape: {q_int8_pe.shape}, dtype: {q_int8_pe.dtype}")
-    print(f"k int8 pe shape: {k_int8_pe.shape}, dtype: {k_int8_pe.dtype}")
+    # print(f"q int8 shape: {q_int8_nope.shape}, dtype: {q_int8_nope.dtype}, q scale shape: {q_scale.shape}")
+    # print(f"k int8 shape: {k_int8_nope.shape}, dtype: {k_int8_nope.dtype}, k scale shape: {k_scale.shape}")
+    # print(f"v fp8 shape: {v_fp8.shape}, dtype: {v_fp8.dtype}, v scale shape: {v_scale.shape}")
+    # print(f"q int8 pe shape: {q_int8_pe.shape}, dtype: {q_int8_pe.dtype}")
+    # print(f"k int8 pe shape: {k_int8_pe.shape}, dtype: {k_int8_pe.dtype}")
 
-    print(f"{q_int8_nope[0, 0, 0, 0], q_int8_pe[0, 0, 0, 0], waste[0, 2, 5, 7]}")
+    # print(f"{q_int8_nope[0, 0, 0, 0], q_int8_pe[0, 0, 0, 0], waste[0, 2, 5, 7]}")
 
     q_int8_nope = q_int8_nope.contiguous()
     k_int8_nope = k_int8_nope.contiguous()

@@ -253,10 +253,6 @@ __global__ void qk_int8_sv_f8_attn_dsk_kernel(const __grid_constant__ CUtensorMa
     load_async_4D(sK_pe, &tensorMapK_pe, &barrier_K_pe, 0, 0, kv_head_id, batch_id);
   }
 
-  if (q_scale_idx >= 32762 / 2) {
-    printf("q_scale_idx: %d, gridDim.x: %d, num_qo_heads: %d, warp_idx: %d\n", q_scale_idx, gridDim.x, num_qo_heads, warp_idx);
-  }
-
   float q_scale = Q_scale[q_scale_idx];
   float original_sm_scale = sm_scale;
 
@@ -640,12 +636,16 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_d
   const int head_dim = query.shape()[3];  // 现在query是正常的128， 多出来的64在query_pe里面，所以这样做没什么问题
 
   int stride_bz_q = query.strides()[0];
+  int stride_bz_q_pe = query_pe.strides()[0];
   int stride_bz_k = key.strides()[0];
+  int stride_bz_k_pe = key_pe.strides()[0];
   int stride_bz_v = value.strides()[0];
   int stride_bz_o = output.strides()[0];
 
   int qo_len, kv_len, padded_kv_len, num_qo_heads, num_kv_heads;
-  int stride_seq_q, stride_h_q, stride_seq_k, stride_h_k, stride_h_v, stride_d_v, stride_seq_o, stride_h_o;
+  int stride_seq_q, stride_h_q, stride_seq_k, stride_h_k, 
+      stride_seq_q_pe, stride_h_q_pe, stride_seq_k_pe, stride_h_k_pe,
+       stride_h_v, stride_d_v, stride_seq_o, stride_h_o;
 
   assert(value.shape()[0] == batch_size);
 
@@ -658,8 +658,12 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_d
 
     stride_seq_q = query.strides()[1];
     stride_h_q = query.strides()[2];
+    stride_seq_q_pe = query_pe.strides()[1];
+    stride_h_q_pe = query_pe.strides()[2];
     stride_seq_k = key.strides()[1];
     stride_h_k = key.strides()[2];
+    stride_seq_k_pe = key_pe.strides()[1];
+    stride_h_k_pe = key_pe.strides()[2];
     stride_h_v = value.strides()[2];
     stride_d_v = value.strides()[1];
     stride_seq_o = output.strides()[1];
@@ -680,8 +684,12 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_d
 
     stride_seq_q = query.strides()[2];
     stride_h_q = query.strides()[1];
+    stride_seq_q_pe = query_pe.strides()[2];
+    stride_h_q_pe = query_pe.strides()[1];
     stride_seq_k = key.strides()[2];
     stride_h_k = key.strides()[1];
+    stride_seq_k_pe = key_pe.strides()[2];
+    stride_h_k_pe = key_pe.strides()[1];
     stride_h_v = value.strides()[1];
     stride_d_v = value.strides()[2];
     stride_seq_o = output.strides()[2];
@@ -739,14 +747,15 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_d
 
           CHECK_SHAPE(value_scale, batch_size, num_kv_heads, HEAD_DIM);
           CUtensorMap tma_map_Q = create_tensor_map_4D<CTA_Q, HEAD_DIM>(reinterpret_cast<int8_t*>(query.data()), batch_size, num_qo_heads, qo_len, HEAD_DIM, stride_bz_q, stride_h_q, stride_seq_q);
-          CUtensorMap tma_map_Q_pe = create_tensor_map_4D<CTA_Q, HEAD_DIM_PE>(reinterpret_cast<int8_t*>(query_pe.data()), batch_size, num_qo_heads, qo_len, HEAD_DIM_PE, stride_bz_q, stride_h_q, stride_seq_q);
+          CUtensorMap tma_map_Q_pe = create_tensor_map_4D<CTA_Q, HEAD_DIM_PE>(reinterpret_cast<int8_t*>(query_pe.data()), batch_size, num_qo_heads, qo_len, HEAD_DIM_PE, stride_bz_q_pe, stride_h_q_pe, stride_seq_q_pe);
           
           CUtensorMap tma_map_K = create_tensor_map_4D<CTA_K, HEAD_DIM>(reinterpret_cast<int8_t*>(key.data()), batch_size, num_kv_heads, kv_len, HEAD_DIM, stride_bz_k, stride_h_k, stride_seq_k);
-          CUtensorMap tma_map_K_pe = create_tensor_map_4D<CTA_K, HEAD_DIM_PE>(reinterpret_cast<int8_t*>(key_pe.data()), batch_size, num_kv_heads, kv_len, HEAD_DIM_PE, stride_bz_k, stride_h_k, stride_seq_k);
+          CUtensorMap tma_map_K_pe = create_tensor_map_4D<CTA_K, HEAD_DIM_PE>(reinterpret_cast<int8_t*>(key_pe.data()), batch_size, num_kv_heads, kv_len, HEAD_DIM_PE, stride_bz_k_pe, stride_h_k_pe, stride_seq_k_pe);
 
           CUtensorMap tma_map_V = create_tensor_map_4D<HEAD_DIM, CTA_K>(reinterpret_cast<int8_t*>(value.data()), batch_size, num_kv_heads, HEAD_DIM, value.shape()[3], stride_bz_v, stride_h_v, stride_d_v);
 
-          const size_t sMemSize = CTA_Q * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t) + CTA_Q * HEAD_DIM_PE * sizeof(int8_t) + CTA_K * HEAD_DIM_PE * sizeof(int8_t);
+          const size_t sMemSize = CTA_Q * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t) + CTA_Q * HEAD_DIM_PE * sizeof(int8_t) + CTA_K * (HEAD_DIM_PE + 128) * sizeof(int8_t);
+          // printf("sMemSize: %ld\n", sMemSize);
 
           auto* kernel = qk_int8_sv_f8_attn_dsk_kernel<CTA_Q, CTA_K, NUM_THREADS, HEAD_DIM, HEAD_DIM_PE, sMemSize, static_cast<QuantGranularity>(QK_QUANT_GRAN), static_cast<QuantGranularity>(QK_QUANT_GRAN), DTypeOut, mask_mode, true>;
           
