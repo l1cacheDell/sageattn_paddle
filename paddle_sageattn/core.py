@@ -2,16 +2,12 @@ import paddle
 import sageattn_custom_ops
 import sageattn_dsk_v2
 
-import sageattention
-
 from typing import Optional, Any
 import warnings
 
 from .quant import per_channel_fp8
 from .quant import per_warp_int8 as per_warp_int8_cuda
 from .quant import sub_mean
-
-from utils import precision_cmp_paddle
 
 
 def sageattn_qk_int8_pv_fp16_cuda_sm80(
@@ -20,7 +16,7 @@ def sageattn_qk_int8_pv_fp16_cuda_sm80(
     v: paddle.Tensor,
     tensor_layout: str = "HND",
     is_causal: bool = False,
-    qk_quant_gran: str = "per_thread",
+    qk_quant_gran: str = "per_warp",
     sm_scale: Optional[float] = None,
     pv_accum_dtype: str = "fp32",
     smooth_k: bool = True,
@@ -37,7 +33,7 @@ def sageattn_qk_int8_pv_fp16_cuda_sm80(
     _qk_quant_gran = 3 if qk_quant_gran == "per_thread" else 2
     _return_lse = 1 if return_lse else 0
 
-    head_dim_og = q.size(-1)
+    head_dim_og = q.shape[-1]
 
     if head_dim_og < 64:
         q = paddle.nn.functional.pad(q, (0, 64 - head_dim_og))
@@ -51,7 +47,7 @@ def sageattn_qk_int8_pv_fp16_cuda_sm80(
         raise ValueError(f"Unsupported head_dim: {head_dim_og}")
 
     # assert last dim is contiguous
-    assert q.stride(-1) == 1 and k.stride(-1) == 1 and v.stride(-1) == 1, "Last dim of qkv must be contiguous."
+    assert q.strides[-1] == 1 and k.strides[-1] == 1 and v.strides[-1] == 1, "Last dim of qkv must be contiguous."
 
     if sm_scale is None:
         sm_scale = head_dim_og**-0.5
@@ -69,7 +65,7 @@ def sageattn_qk_int8_pv_fp16_cuda_sm80(
         km = None
 
     if qk_quant_gran == "per_warp":
-        q_int8, q_scale, k_int8, k_scale = per_warp_int8_cuda(q, k, km, tensor_layout=tensor_layout, BLKQ=128, WARPQ=(16 if (q.size(-1) == 128 and pv_accum_dtype == "fp16+fp32") else 32), BLKK=64)
+        q_int8, q_scale, k_int8, k_scale = per_warp_int8_cuda(q, k, km, tensor_layout=tensor_layout, BLKQ=128, WARPQ=(16 if (q.shape[-1] == 128 and pv_accum_dtype == "fp16+fp32") else 32), BLKK=64)
 
     o = paddle.empty(q.shape, dtype=dtype)
 
@@ -163,9 +159,9 @@ def sageattn_qk_int8_pv_fp8_cuda_sm89(
 
     if pv_accum_dtype == "fp32":
         if smooth_v:
-            lse = sageattn_custom_ops.qk_int8_sv_f8_accum_f32_fuse_v_scale_fuse_v_mean_attn(q_int8, k_int8, v_fp8, o, q_scale, k_scale, v_scale, vm, _tensor_layout, _is_caual, _qk_quant_gran, sm_scale, _return_lse)
+            lse = sageattn_custom_ops.qk_int8_sv_f8_accum_f32_fuse_v_scale_fuse_v_mean_attn(q_int8, k_int8, v_fp8, o, q_scale, k_scale, v_scale, vm, _tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse)
         else:
-            lse = sageattn_custom_ops.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn(q_int8, k_int8, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_caual, _qk_quant_gran, sm_scale, _return_lse)
+            lse = sageattn_custom_ops.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn(q_int8, k_int8, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse)
     elif pv_accum_dtype == "fp32+fp32":
         lse = sageattn_custom_ops.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm89(q_int8, k_int8, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse)
 
