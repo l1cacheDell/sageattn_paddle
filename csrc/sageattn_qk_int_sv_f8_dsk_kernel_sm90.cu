@@ -628,12 +628,16 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_attn_inst_buf_dsk_sm90_fwd(
   const int head_dim = query.shape()[3];  // 现在query是正常的128， 多出来的64在query_pe里面，所以这样做没什么问题
 
   int stride_bz_q = query.strides()[0];
+  int stride_bz_q_pe = query_pe.strides()[0];
   int stride_bz_k = key.strides()[0];
+  int stride_bz_k_pe = key_pe.strides()[0];
   int stride_bz_v = value.strides()[0];
   int stride_bz_o = output.strides()[0];
 
   int qo_len, kv_len, padded_kv_len, num_qo_heads, num_kv_heads;
-  int stride_seq_q, stride_h_q, stride_seq_k, stride_h_k, stride_h_v, stride_d_v, stride_seq_o, stride_h_o;
+  int stride_seq_q, stride_h_q, stride_seq_k, stride_h_k, 
+      stride_seq_q_pe, stride_h_q_pe, stride_seq_k_pe, stride_h_k_pe,
+       stride_h_v, stride_d_v, stride_seq_o, stride_h_o;
 
   assert(value.shape()[0] == batch_size);
 
@@ -646,8 +650,12 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_attn_inst_buf_dsk_sm90_fwd(
 
     stride_seq_q = query.strides()[1];
     stride_h_q = query.strides()[2];
+    stride_seq_q_pe = query_pe.strides()[1];
+    stride_h_q_pe = query_pe.strides()[2];
     stride_seq_k = key.strides()[1];
     stride_h_k = key.strides()[2];
+    stride_seq_k_pe = key_pe.strides()[1];
+    stride_h_k_pe = key_pe.strides()[2];
     stride_h_v = value.strides()[2];
     stride_d_v = value.strides()[1];
     stride_seq_o = output.strides()[1];
@@ -655,6 +663,7 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_attn_inst_buf_dsk_sm90_fwd(
 
     CHECK_SHAPE(key, batch_size, kv_len, num_kv_heads, head_dim);
     CHECK_SHAPE(output, batch_size, qo_len, num_qo_heads, head_dim);
+    
     assert(value.shape()[1] == head_dim);
     assert(value.shape()[2] == num_kv_heads);
   }
@@ -667,8 +676,12 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_attn_inst_buf_dsk_sm90_fwd(
 
     stride_seq_q = query.strides()[2];
     stride_h_q = query.strides()[1];
+    stride_seq_q_pe = query_pe.strides()[2];
+    stride_h_q_pe = query_pe.strides()[1];
     stride_seq_k = key.strides()[2];
     stride_h_k = key.strides()[1];
+    stride_seq_k_pe = key_pe.strides()[2];
+    stride_h_k_pe = key_pe.strides()[1];
     stride_h_v = value.strides()[1];
     stride_d_v = value.strides()[2];
     stride_seq_o = output.strides()[2];
@@ -726,8 +739,8 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_attn_inst_buf_dsk_sm90_fwd(
 
           CUtensorMap tma_map_Q = create_tensor_map_4D<CTA_Q, HEAD_DIM>(reinterpret_cast<int8_t*>(query.data()), batch_size, num_qo_heads, qo_len, HEAD_DIM, stride_bz_q, stride_h_q, stride_seq_q);
           CUtensorMap tma_map_K = create_tensor_map_4D<CTA_K, HEAD_DIM>(reinterpret_cast<int8_t*>(key.data()), batch_size, num_kv_heads, kv_len, HEAD_DIM, stride_bz_k, stride_h_k, stride_seq_k);
-          CUtensorMap tma_map_Q_pe = create_tensor_map_4D<CTA_Q, HEAD_DIM_PE>(reinterpret_cast<int8_t*>(query_pe.data()), batch_size, num_qo_heads, qo_len, HEAD_DIM_PE, stride_bz_q, stride_h_q, stride_seq_q);
-          CUtensorMap tma_map_K_pe = create_tensor_map_4D<CTA_K, HEAD_DIM_PE>(reinterpret_cast<int8_t*>(key_pe.data()), batch_size, num_kv_heads, kv_len, HEAD_DIM_PE, stride_bz_k, stride_h_k, stride_seq_k);
+          CUtensorMap tma_map_Q_pe = create_tensor_map_4D<CTA_Q, HEAD_DIM_PE>(reinterpret_cast<int8_t*>(query_pe.data()), batch_size, num_qo_heads, qo_len, HEAD_DIM_PE, stride_bz_q_pe, stride_h_q_pe, stride_seq_q_pe);
+          CUtensorMap tma_map_K_pe = create_tensor_map_4D<CTA_K, HEAD_DIM_PE>(reinterpret_cast<int8_t*>(key_pe.data()), batch_size, num_kv_heads, kv_len, HEAD_DIM_PE, stride_bz_k_pe, stride_h_k_pe, stride_seq_k_pe);
           
           CUtensorMap tma_map_V = create_tensor_map_4D<HEAD_DIM, CTA_K>(reinterpret_cast<int8_t*>(value.data()), batch_size, num_kv_heads, HEAD_DIM, value.shape()[3], stride_bz_v, stride_h_v, stride_d_v);
 
@@ -862,12 +875,16 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_d
   const int head_dim = query.shape()[3];
 
   int stride_bz_q = query.strides()[0];
+  int stride_bz_q_pe = query_pe.strides()[0];
   int stride_bz_k = key.strides()[0];
+  int stride_bz_k_pe = key_pe.strides()[0];
   int stride_bz_v = value.strides()[0];
   int stride_bz_o = output.strides()[0];
 
   int qo_len, kv_len, padded_kv_len, num_qo_heads, num_kv_heads;
-  int stride_seq_q, stride_h_q, stride_seq_k, stride_h_k, stride_h_v, stride_d_v, stride_seq_o, stride_h_o;
+  int stride_seq_q, stride_h_q, stride_seq_k, stride_h_k, 
+      stride_seq_q_pe, stride_h_q_pe, stride_seq_k_pe, stride_h_k_pe,
+       stride_h_v, stride_d_v, stride_seq_o, stride_h_o;
 
   assert(value.shape()[0] == batch_size);
 
@@ -880,8 +897,12 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_d
 
     stride_seq_q = query.strides()[1];
     stride_h_q = query.strides()[2];
+    stride_seq_q_pe = query_pe.strides()[1];
+    stride_h_q_pe = query_pe.strides()[2];
     stride_seq_k = key.strides()[1];
     stride_h_k = key.strides()[2];
+    stride_seq_k_pe = key_pe.strides()[1];
+    stride_h_k_pe = key_pe.strides()[2];
     stride_h_v = value.strides()[2];
     stride_d_v = value.strides()[1];
     stride_seq_o = output.strides()[1];
@@ -902,8 +923,12 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_d
 
     stride_seq_q = query.strides()[2];
     stride_h_q = query.strides()[1];
+    stride_seq_q_pe = query_pe.strides()[2];
+    stride_h_q_pe = query_pe.strides()[1];
     stride_seq_k = key.strides()[2];
     stride_h_k = key.strides()[1];
+    stride_seq_k_pe = key_pe.strides()[2];
+    stride_h_k_pe = key_pe.strides()[1];
     stride_h_v = value.strides()[1];
     stride_d_v = value.strides()[2];
     stride_seq_o = output.strides()[2];
@@ -961,11 +986,9 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_d
 
           CHECK_SHAPE(value_scale, batch_size, num_kv_heads, HEAD_DIM);
           CUtensorMap tma_map_Q = create_tensor_map_4D<CTA_Q, HEAD_DIM>(reinterpret_cast<int8_t*>(query.data()), batch_size, num_qo_heads, qo_len, HEAD_DIM, stride_bz_q, stride_h_q, stride_seq_q);
-          CUtensorMap tma_map_Q_pe = create_tensor_map_4D<CTA_Q, HEAD_DIM_PE>(reinterpret_cast<int8_t*>(query_pe.data()), batch_size, num_qo_heads, qo_len, HEAD_DIM_PE, stride_bz_q, stride_h_q, stride_seq_q);
-          
           CUtensorMap tma_map_K = create_tensor_map_4D<CTA_K, HEAD_DIM>(reinterpret_cast<int8_t*>(key.data()), batch_size, num_kv_heads, kv_len, HEAD_DIM, stride_bz_k, stride_h_k, stride_seq_k);
-          
-          CUtensorMap tma_map_K_pe = create_tensor_map_4D<CTA_K, HEAD_DIM_PE>(reinterpret_cast<int8_t*>(key_pe.data()), batch_size, num_kv_heads, kv_len, HEAD_DIM_PE, stride_bz_k, stride_h_k, stride_seq_k);
+          CUtensorMap tma_map_Q_pe = create_tensor_map_4D<CTA_Q, HEAD_DIM_PE>(reinterpret_cast<int8_t*>(query_pe.data()), batch_size, num_qo_heads, qo_len, HEAD_DIM_PE, stride_bz_q_pe, stride_h_q_pe, stride_seq_q_pe);
+          CUtensorMap tma_map_K_pe = create_tensor_map_4D<CTA_K, HEAD_DIM_PE>(reinterpret_cast<int8_t*>(key_pe.data()), batch_size, num_kv_heads, kv_len, HEAD_DIM_PE, stride_bz_k_pe, stride_h_k_pe, stride_seq_k_pe);
 
           CUtensorMap tma_map_V = create_tensor_map_4D<HEAD_DIM, CTA_K>(reinterpret_cast<int8_t*>(value.data()), batch_size, num_kv_heads, HEAD_DIM, value.shape()[3], stride_bz_v, stride_h_v, stride_d_v);
           
