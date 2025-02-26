@@ -140,16 +140,23 @@ print("=========== VERY IMPORTANT NOTICE ===========")
 print("Please turn off the '-G' flag before building")
 print("=============================================")
 
+source_files = [
+    'csrc/sageattn_fused.cu',
+    'csrc/sageattn_qk_int_sv_f16_kernel_sm80.cu', 
+    'csrc/sageattn_qk_int_sv_f8_kernel_sm89.cu',
+]
+
+for capability in compute_capabilities:
+    if capability[0] == '9':
+        source_files += [
+            'csrc/sageattn_qk_int_sv_f8_kernel_sm90.cu',
+            'csrc/sageattn_qk_int_sv_f8_dsk_kernel_sm90.cu',
+        ]
+
 setup(
     name='sageattn_custom_ops',
     ext_modules=[CUDAExtension(
-        sources=[
-            'csrc/sageattn_fused.cu',
-            'csrc/sageattn_qk_int_sv_f16_kernel_sm80.cu', 
-            'csrc/sageattn_qk_int_sv_f8_kernel_sm89.cu',
-            'csrc/sageattn_qk_int_sv_f8_kernel_sm90.cu',
-            'csrc/sageattn_qk_int_sv_f8_dsk_kernel_sm90.cu',
-        ],
+        sources=source_files,
         extra_compile_args={
             "cc": ["-lcuda"],
             "cxx": CXX_FLAGS,
