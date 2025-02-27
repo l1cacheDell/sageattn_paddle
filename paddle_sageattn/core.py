@@ -150,9 +150,9 @@ def sageattn_qk_int8_pv_fp8_cuda_sm89(
         km = None
     
     if qk_quant_gran == "per_warp":
-        q_int8, q_scale, k_int8, k_scale = per_warp_int8_cuda(q, k, km, tensor_layout=tensor_layout)
+        q_int8, q_scale, k_int8, k_scale = per_warp_int8_cuda(q, k, km, tensor_layout=tensor_layout, BLKQ=128, WARPQ=32, BLKK=64)
     elif qk_quant_gran == "per_thread":
-        q_int8, q_scale, k_int8, k_scale = paddlemix.triton_ops.per_thread_int8(q, k, km, tensor_layout=tensor_layout)
+        q_int8, q_scale, k_int8, k_scale = paddlemix.triton_ops.per_thread_int8(q, k, km, tensor_layout=tensor_layout, BLKQ=128, WARPQ=32, BLKK=64, WARPK=64)
 
     o = paddle.empty(q.shape, dtype=dtype)
     if pv_accum_dtype == 'fp32+fp32' and smooth_v:
