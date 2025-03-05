@@ -28,10 +28,16 @@ q = paddle.randn(shape=(bsz, seq_len, num_heads, head_dim), dtype=paddle.float16
 k = paddle.randn(shape=(bsz, seq_len, num_heads, head_dim), dtype=paddle.float16)
 v = paddle.randn(shape=(bsz, seq_len, num_heads, head_dim), dtype=paddle.float16)
 
-print(q.place)
-
 km = paddle.mean(k, axis=1, keepdim=True)
 km = km.squeeze(1) if tensor_layout == "NHD" else km.squeeze(2)
+
+# remember do padding to v!
+v_pad_len = 128 - (seq_len % 128) if seq_len % 128 != 0 else 0
+if v_pad_len > 0:
+    if tensor_layout == "HND":
+        v = paddle.concat([v, paddle.zeros(v.shape[0], v.shape[1], v_pad_len, v.shape[3], dtype=v.dtype, device=v.device)], dim=2)
+    else:
+        v = paddle.concat([v, paddle.zeros(v.shape[0], v_pad_len, v.shape[2], v.shape[3], dtype=v.dtype, device=v.device)], dim=1)
 
 o1 = sageattn_custom_ops.sage_attention(q, 
                                         k, 
