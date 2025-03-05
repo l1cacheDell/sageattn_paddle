@@ -1146,8 +1146,8 @@ std::vector<paddle::Tensor> per_warp_int8_cuda(paddle::Tensor& q,
                                             int BLKK,
                                             int tensor_layout) 
 {
-    paddle::Tensor q_int8 = paddle::empty(q.shape(), paddle::DataType::INT8);
-    paddle::Tensor k_int8 = paddle::empty(k.shape(), paddle::DataType::INT8);
+    paddle::Tensor q_int8 = paddle::empty(q.shape(), paddle::DataType::INT8, paddle::GPUPlace());
+    paddle::Tensor k_int8 = paddle::empty(k.shape(), paddle::DataType::INT8, paddle::GPUPlace());
     int b, h_qo, qo_len, head_dim, h_kv, kv_len;
 
     // tensor_layout == 0: NHD - [b, qo_len, h_qo, head_dim]
@@ -1172,8 +1172,8 @@ std::vector<paddle::Tensor> per_warp_int8_cuda(paddle::Tensor& q,
         throw std::invalid_argument("tensor_layout must be 0 or 1");
     }
 
-    paddle::Tensor q_scale = paddle::empty({b, h_qo, ((qo_len + BLKQ - 1) / BLKQ) * (BLKQ / WARPQ)}, paddle::DataType::FLOAT32);
-    paddle::Tensor k_scale = paddle::empty({b, h_kv, ((kv_len + BLKK - 1) / BLKK)}, paddle::DataType::FLOAT32);
+    paddle::Tensor q_scale = paddle::empty({b, h_qo, ((qo_len + BLKQ - 1) / BLKQ) * (BLKQ / WARPQ)}, paddle::DataType::FLOAT32, paddle::GPUPlace());
+    paddle::Tensor k_scale = paddle::empty({b, h_kv, ((kv_len + BLKK - 1) / BLKK)}, paddle::DataType::FLOAT32, paddle::GPUPlace());
 
     quant_per_warp_int8_cuda_fwd(q, q_int8, q_scale, BLKQ, WARPQ, tensor_layout);
 
@@ -1201,22 +1201,22 @@ std::vector<paddle::Tensor> per_channel_fp8(paddle::Tensor& v,
         kv_len = v.shape()[2];
         head_dim = v.shape()[3];
 
-        padded_len = (kv_len + 63); // 64 * 64
-        v_transposed_permutted = paddle::empty({b, h_kv, head_dim, padded_len}, v.dtype());
+        padded_len = (kv_len + 63) / 64 * 64;
+        v_transposed_permutted = paddle::empty({b, h_kv, head_dim, padded_len}, v.dtype(), paddle::GPUPlace());
     } else if (tensor_layout == 0) {
         b = v.shape()[0];
         kv_len = v.shape()[1];
         h_kv = v.shape()[2];
         head_dim = v.shape()[3];
 
-        padded_len = (kv_len + 63); // 64 * 64
-        v_transposed_permutted = paddle::empty({b, head_dim, h_kv, padded_len}, v.dtype());
+        padded_len = (kv_len + 63) / 64 * 64;
+        v_transposed_permutted = paddle::empty({b, head_dim, h_kv, padded_len}, v.dtype(), paddle::GPUPlace());
     }
     transpose_pad_permute_cuda_fwd(v, v_transposed_permutted, tensor_layout);
 
-    paddle::Tensor v_fp8 = paddle::empty(v_transposed_permutted.shape(), paddle::DataType::FLOAT8_E4M3FN);
-    paddle::Tensor v_scale = paddle::empty({b, h_kv, head_dim}, paddle::DataType::FLOAT32);
-    paddle::Tensor vm = paddle::empty({b, h_kv, head_dim}, paddle::DataType::FLOAT32);
+    paddle::Tensor v_fp8 = paddle::empty(v_transposed_permutted.shape(), paddle::DataType::FLOAT8_E4M3FN, paddle::GPUPlace());
+    paddle::Tensor v_scale = paddle::empty({b, h_kv, head_dim}, paddle::DataType::FLOAT32, paddle::GPUPlace());
+    paddle::Tensor vm = paddle::empty({b, h_kv, head_dim}, paddle::DataType::FLOAT32, paddle::GPUPlace());
     if (smooth_v) {
         mean_scale_fuse_quant_cuda_fwd(v_transposed_permutted, v_fp8, vm, v_scale, kv_len, scale_max, tensor_layout);
     } else {
@@ -1230,7 +1230,7 @@ std::vector<paddle::Tensor> sub_mean(paddle::Tensor& v,
                                     paddle::Tensor& vm,
                                     int tensor_layout)
 {
-    paddle::Tensor v_smoothed = paddle::empty(v.shape(), paddle::DataType::FLOAT16);
+    paddle::Tensor v_smoothed = paddle::empty(v.shape(), paddle::DataType::FLOAT16, paddle::GPUPlace());
 
     sub_mean_cuda_fwd(v, vm, v_smoothed, tensor_layout);
     return {v_smoothed, vm};

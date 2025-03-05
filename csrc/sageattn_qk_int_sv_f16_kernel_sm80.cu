@@ -1572,7 +1572,7 @@ std::vector<paddle::Tensor> sage_attention_fwd(paddle::Tensor& q,
   int WARPQ = (q.shape()[3] == 128 && pv_accum_dtype_const == paddle::DataType::UNDEFINED) ? 16 : 32;
   constexpr int BLKK = 64;
   std::vector<paddle::Tensor>&& quant_results = per_warp_int8_cuda(q, k, km, BLKQ, WARPQ, BLKK, tensor_layout); // q_int8, q_scale, k_int8, k_scale
-  paddle::Tensor o = paddle::empty(v.shape(), v.dtype());
+  paddle::Tensor o = paddle::empty(v.shape(), v.dtype(), paddle::GPUPlace());
 
   if (pv_accum_dtype_const == paddle::DataType::UNDEFINED || pv_accum_dtype_const == paddle::DataType::FLOAT32) {
     if (smooth_v) smooth_v = false;

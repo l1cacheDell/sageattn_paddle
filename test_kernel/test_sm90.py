@@ -1,4 +1,4 @@
-from paddle_sageattn import sageattn_qk_int8_pv_fp8_cuda_sm90
+import sageattn_custom_ops
 import paddle
 
 def precision_cmp_paddle(t1: paddle.Tensor, t2: paddle.Tensor):
@@ -28,7 +28,24 @@ q = paddle.randn(shape=(bsz, seq_len, num_heads, head_dim), dtype=paddle.float16
 k = paddle.randn(shape=(bsz, seq_len, num_heads, head_dim), dtype=paddle.float16)
 v = paddle.randn(shape=(bsz, seq_len, num_heads, head_dim), dtype=paddle.float16)
 
-o1 = sageattn_qk_int8_pv_fp8_cuda_sm90(q, k, v, tensor_layout=tensor_layout, is_causal=is_causal, return_lse=return_lse)
+print(q.place)
+
+km = paddle.mean(k, axis=1, keepdim=True)
+km = km.squeeze(1) if tensor_layout == "NHD" else km.squeeze(2)
+
+o1 = sageattn_custom_ops.sage_attention(q, 
+                                        k, 
+                                        v, 
+                                        km, 
+                                        None,
+                                        head_dim**-0.5,
+                                        "per_warp",
+                                        "fp16",
+                                        tensor_layout=0, 
+                                        is_causal=is_causal, 
+                                        smooth_k=True, 
+                                        smooth_v=False, 
+                                        return_lse=return_lse)
 o2 = paddle.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=is_causal)
 
 sim, l1, max_diff = precision_cmp_paddle(o1, o2)

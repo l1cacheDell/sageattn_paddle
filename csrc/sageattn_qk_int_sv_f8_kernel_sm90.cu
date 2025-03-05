@@ -998,7 +998,7 @@ std::vector<paddle::Tensor> sage_attention_fwd(paddle::Tensor& q,
   int v_seq_len = (tensor_layout == 0) ? v.shape()[1] : v.shape()[2];
   PD_CHECK(v_seq_len % 128 == 0, "v_seq_len must be multiple of 128, do padding before calling this op.");
 
-  paddle::Tensor o = paddle::empty(v.shape(), v.dtype());
+  paddle::Tensor o = paddle::empty(v.shape(), v.dtype(), paddle::GPUPlace());
 
   std::vector<paddle::Tensor>&& quant_vfp8_results = per_channel_fp8(v, tensor_layout, 448.0, false);
 
