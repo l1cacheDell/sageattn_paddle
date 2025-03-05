@@ -959,3 +959,83 @@ PD_BUILD_OP(qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm90)
     .SetKernelFn(PD_KERNEL(qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm90_fwd))
     .SetInferShapeFn(PD_INFER_SHAPE(qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm90_InferShape))
     .SetInferDtypeFn(PD_INFER_DTYPE(qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm90_InferDtype));
+
+//
+//  =========== Exposed to Outside API - ARCH: SM89 ===========
+//
+
+std::vector<paddle::Tensor> sage_attention_fwd(paddle::Tensor& q,
+                                               paddle::Tensor& k,
+                                               paddle::Tensor& v,
+                                               paddle::Tensor& km,
+                                               paddle::optional<paddle::Tensor>& vm,
+                                               float sm_scale,
+                                               std::string qk_quant_gran,
+                                               std::string pv_accum_dtype,
+                                               int tensor_layout,
+                                               bool is_causal,
+                                               bool smooth_k,
+                                               bool smooth_v,
+                                               bool return_lse)
+{
+  int _is_causal = int(is_causal);
+  int _qk_quant_gran = (qk_quant_gran == std::string("per_thread")) ? 3 : 2;
+  int _return_lse = int(return_lse);
+
+  auto pv_accum_dtype_const = (pv_accum_dtype == std::string("fp32+fp32")) ? paddle::DataType::UNDEFINED : paddle::DataType::FLOAT32;
+
+  PD_CHECK(q.shape()[3] == 64 || q.shape()[3] == 128, "head_dim must be either 64 or 128");
+  PD_CHECK(q.strides()[3] == 1 && k.strides()[3] == 1 && v.strides()[3] == 1, "Last dim of qkv must be contiguous.");
+
+  int seq_dim = (tensor_layout == 0) ? 1 : 2;
+
+  // quant q, k -> q_int8, k_int8
+  constexpr int BLKQ = 64;
+  int WARPQ = 16;
+  constexpr int BLKK = 128;
+  std::vector<paddle::Tensor>&& quant_qk_results = per_warp_int8_cuda(q, k, km, BLKQ, WARPQ, BLKK, tensor_layout); // q_int8, q_scale, k_int8, k_scale
+
+  int v_seq_len = (tensor_layout == 0) ? v.shape()[1] : v.shape()[2];
+  PD_CHECK(v_seq_len % 128 == 0, "v_seq_len must be multiple of 128, do padding before calling this op.");
+
+  paddle::Tensor o = paddle::empty(v.shape(), v.dtype());
+
+  std::vector<paddle::Tensor>&& quant_vfp8_results = per_channel_fp8(v, tensor_layout, 448.0, false);
+
+  qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm90_fwd(quant_qk_results[0], quant_qk_results[2], quant_vfp8_results[0], o, quant_qk_results[1], quant_qk_results[3], quant_vfp8_results[1], tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse);
+
+  return {o};
+}
+
+std::vector<std::vector<int64_t>> sage_attention_InferShape(
+  const std::vector<int64_t> query_shape, 
+  const std::vector<int64_t> key_shape, 
+  const std::vector<int64_t> value_shape,
+  const std::vector<int64_t> km_shape,
+  const paddle::optional<std::vector<int64_t>>& vm_shape) {
+    return {value_shape};
+}
+
+std::vector<paddle::DataType> sage_attention_InferDtype(
+  const paddle::DataType A_dtype,
+  const paddle::DataType B_dtype,
+  const paddle::DataType C_dtype,
+  const paddle::DataType D_dtype,
+  const paddle::optional<paddle::DataType>& E_dtype) {
+  return {C_dtype};
+}
+
+PD_BUILD_OP(sage_attention)
+    .Inputs({"q", "k", "v", "km", paddle::Optional("vm")})
+    .Outputs({"o"})
+    .Attrs({"sm_scale: float",
+            "qk_quant_gran: std::string",
+            "pv_accum_dtype: std::string",
+            "tensor_layout: int",
+            "is_causal: bool",
+            "smooth_k: bool",
+            "smooth_v: bool",
+            "return_lse: bool"})
+    .SetKernelFn(PD_KERNEL(sage_attention_fwd))
+    .SetInferShapeFn(PD_INFER_SHAPE(sage_attention_InferShape))
+    .SetInferDtypeFn(PD_INFER_DTYPE(sage_attention_InferDtype));
