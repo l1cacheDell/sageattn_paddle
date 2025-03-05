@@ -4,6 +4,7 @@
 
 // #include "sageattn.h"
 #include "sageattn_utils.cuh"
+#include "sageattn_func.cuh"
 
 #define PACK_SIZE_QK 16 // as if it is int8
 #define PACK_SIZE_V 16  // fp8

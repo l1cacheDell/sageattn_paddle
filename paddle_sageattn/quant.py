@@ -120,7 +120,7 @@ def sub_mean(
     tensor_layout: str ="HND"
 ):
     _tensor_layout = 0 if tensor_layout == "NHD" else 1
-    vm = v.mean(dim=1 if _tensor_layout == 0 else 2)
+    vm = v.mean(axis=1 if _tensor_layout == 0 else 2)
 
     v_smoothed = paddle.empty(v.shape, dtype=paddle.float16)
     

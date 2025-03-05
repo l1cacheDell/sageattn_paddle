@@ -3,6 +3,8 @@
 #include <cuda_bf16.h>
 
 #include "sageattn_utils.cuh"
+#include "sageattn_func.cuh"
+
 #include "paddle/extension.h"
 
 enum class QuantType
@@ -729,6 +731,85 @@ PD_BUILD_OP(quant_per_block_int8_cuda)
     .SetInplaceMap({{"input", "out1"}, {"output", "out2"}, {"scale", "out3"}}) // Inplace
     .Attrs({"sm_scale: float", "block_size: int", "tensor_layout: int"})
     .SetKernelFn(PD_KERNEL(quant_per_block_int8_cuda_fwd));
+
+void sub_mean_cuda_fwd(paddle::Tensor& input,
+                paddle::Tensor& mean,
+                paddle::Tensor& output,
+                int tensor_layout)
+{
+  CHECK_CUDA(input);
+  CHECK_CUDA(mean);
+  CHECK_CUDA(output);
+  
+  CHECK_LASTDIM_CONTIGUOUS(input);
+  CHECK_CONTIGUOUS(mean);
+  CHECK_CONTIGUOUS(output);
+
+  CHECK_DIMS(input, 4);
+  CHECK_DIMS(mean, 3);
+  CHECK_DIMS(output, 4);
+
+  CHECK_DTYPE(output, paddle::DataType::FLOAT16);
+
+  const int batch_size = input.shape()[0];
+  const int head_dim = input.shape()[3];
+
+  int stride_bz_input = input.strides()[0];
+  int stride_bz_output = output.strides()[0];
+
+  int num_tokens, num_heads;
+  int stride_seq_input, stride_h_input, stride_seq_output, stride_h_output;
+
+  if (tensor_layout == 0)
+  {
+    num_tokens = input.shape()[1];
+    num_heads = input.shape()[2];
+    stride_seq_input = input.strides()[1];
+    stride_h_input = input.strides()[2];
+    stride_seq_output = output.strides()[1];
+    stride_h_output = output.strides()[2];
+  }
+  else
+  {
+    num_tokens = input.shape()[2];
+    num_heads = input.shape()[1];
+    stride_seq_input = input.strides()[2];
+    stride_h_input = input.strides()[1];
+    stride_seq_output = output.strides()[2];
+    stride_h_output = output.strides()[1];
+  }
+
+  auto input_dtype = input.dtype();
+  auto mean_dtype = mean.dtype();
+
+  PD_CHECK(input_dtype == mean_dtype, "Input and mean must have the same data type");
+
+  DISPATCH_PADDLE_DTYPE_TO_CTYPE_FP16(input_dtype, c_type, {
+    DISPATCH_HEAD_DIM(head_dim, HEAD_DIM, {
+        
+        CHECK_SHAPE(mean, batch_size, num_heads, head_dim);
+        CHECK_SHAPE(output, input.shape()[0], input.shape()[1], input.shape()[2], input.shape()[3]);
+  
+        constexpr int BLOCK_SIZE = (HEAD_DIM == 128) ? 64 : 128;
+
+        dim3 grid((num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE, num_heads, batch_size);
+
+        constexpr int num_pack_per_thread = (BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024;
+
+        dim3 block(BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
+
+        SubMeanKernel<HEAD_DIM, BLOCK_SIZE, num_pack_per_thread><<<grid, block>>>(
+          reinterpret_cast<c_type*>(input.data()),
+          reinterpret_cast<c_type*>(mean.data()),
+          reinterpret_cast<half*>(output.data()),
+          num_tokens,
+          stride_bz_input, stride_seq_input, stride_h_input,
+          mean.strides()[0], mean.strides()[1],
+          stride_bz_output, stride_seq_output, stride_h_output
+        );
+    });
+  });
+}
 
 // quant v用，但是v不是192，所以可以沿用原来的DISPATCH_HEAD_DIM
 void transpose_pad_permute_cuda_fwd(
