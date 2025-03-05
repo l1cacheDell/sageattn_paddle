@@ -189,6 +189,68 @@ __global__ void QuantInt8Kernel(T *__restrict__ input, T *__restrict__ mean, int
   }
 }
 
+template <uint32_t head_dim, uint32_t BLOCK_SIZE, uint32_t num_pack_per_thread = 1, typename T>
+__global__ void SubMeanKernel(T *__restrict__ input, T *__restrict__ mean, half *__restrict__ output, const uint32_t num_tokens, 
+                            const uint32_t stride_bz_input, const uint32_t stride_seq_input, const uint32_t stride_h_input,
+                            const uint32_t stride_bz_mean, const uint32_t stride_h_mean,
+                            const uint32_t stride_bz_output, const uint32_t stride_seq_output, const uint32_t stride_h_output)
+{
+  static_assert(std::is_same<T, half>::value || std::is_same<T, nv_bfloat16>::value, "Only half and bfloat16 are supported");
+  static_assert(num_pack_per_thread > 0, "The number of pack per thread must be greater than 0");
+
+  using T2 = typename std::conditional<std::is_same<T, half>::value, half2, nv_bfloat162>::type;
+
+  constexpr uint32_t pack_size = 8; // float4 contains 8 half or 8 bfloat16
+  constexpr uint32_t num_threads_per_token = head_dim / pack_size;
+
+  static_assert(num_threads_per_token <= 32, "The number of threads per token must be less than or equal to warp size");
+
+  T2 x_val[num_pack_per_thread][4];
+  T2 mean_val[4];
+
+  uint32_t bx = blockIdx.x;
+  uint32_t head_id = blockIdx.y;
+  uint32_t batch_id = blockIdx.z;
+  uint32_t thread_id = threadIdx.x;
+
+  uint32_t thread_base_token = bx * BLOCK_SIZE + thread_id / num_threads_per_token;
+  T *input_ptr_base = input + batch_id * stride_bz_input + head_id * stride_h_input + thread_base_token * stride_seq_input + thread_id % num_threads_per_token * pack_size;
+  T *mean_ptr_base = mean + batch_id * stride_bz_mean + head_id * stride_h_mean + thread_id % num_threads_per_token * pack_size;
+  half *output_ptr_base = output + batch_id * stride_bz_output + head_id * stride_h_output + thread_base_token * stride_seq_output + thread_id % num_threads_per_token * pack_size;
+
+  *(float4*)(&mean_val[0]) = *(float4*)(mean_ptr_base);
+
+  constexpr uint32_t iter_stride = BLOCK_SIZE / num_pack_per_thread;
+
+  // load the data
+  for (uint32_t i = 0; i < num_pack_per_thread; i++)
+  {
+    if (thread_base_token + i * iter_stride < num_tokens)
+    {
+      *(float4*)(&x_val[i][0]) = *(float4*)(input_ptr_base + i * iter_stride * stride_seq_input);
+#pragma unroll
+      for (uint32_t j = 0; j < 4; j++)
+      {
+        x_val[i][j] = __hsub2(x_val[i][j], mean_val[j]);
+
+        if constexpr (std::is_same<T, nv_bfloat16>::value)
+        {
+          ((half2*)x_val[i])[j] = __float22half2_rn(__bfloat1622float2(x_val[i][j])); 
+        }
+      }
+    }
+  }
+
+#pragma unroll
+  for (uint32_t i = 0; i < num_pack_per_thread; i++)
+  {
+    if (thread_base_token + i * iter_stride < num_tokens)
+    {
+      *reinterpret_cast<float4*>(output_ptr_base + i * iter_stride * stride_seq_output) = *reinterpret_cast<float4*>(&x_val[i][0]);
+    }
+  }
+}
+
 template <uint32_t head_dim, uint32_t CTA_SIZE, bool pad_zero=false, typename T>
 __global__ void TransposePadPermuteKernel(T *__restrict__ input, T *__restrict__ output, const uint32_t num_tokens,
                             const uint32_t stride_bz_input, const uint32_t stride_seq_input, const uint32_t stride_h_input,
@@ -1075,16 +1137,17 @@ PD_BUILD_OP(mean_scale_fuse_quant_cuda)
 //  =========== Exposed to Outside API ===========
 //
 
+// remember to squeese km to 4-dim before use this func.
 std::vector<paddle::Tensor> per_warp_int8_cuda(paddle::Tensor& q,
                                             paddle::Tensor& k,
-                                            paddle::optional<paddle::Tensor>& km,
+                                            paddle::Tensor& km,
                                             int BLKQ,
                                             int WARPQ,
                                             int BLKK,
                                             int tensor_layout) 
 {
-    paddle::Tensor q_int8 = paddle::empty(q.shape, paddle::DataType::INT8);
-    paddle::Tensor k_int8 = paddle::empty(k.shape, paddle::DataType::INT8);
+    paddle::Tensor q_int8 = paddle::empty(q.shape(), paddle::DataType::INT8);
+    paddle::Tensor k_int8 = paddle::empty(k.shape(), paddle::DataType::INT8);
     int b, h_qo, qo_len, head_dim, h_kv, kv_len;
 
     // tensor_layout == 0: NHD - [b, qo_len, h_qo, head_dim]
@@ -1113,16 +1176,14 @@ std::vector<paddle::Tensor> per_warp_int8_cuda(paddle::Tensor& q,
     paddle::Tensor k_scale = paddle::empty({b, h_kv, ((kv_len + BLKK - 1) / BLKK)}, paddle::DataType::FLOAT32);
 
     quant_per_warp_int8_cuda_fwd(q, q_int8, q_scale, BLKQ, WARPQ, tensor_layout);
-    if (km) {
-        if (tensor_layout == 0) {
-            km = km.squeeze(1);
-        } else {
-            km = km.squeeze(2);
-        }
-        quant_per_block_int8_fuse_sub_mean_cuda_fwd(k, km, k_int8, k_scale, BLKK, tensor_layout);
-    } else {
-        quant_per_block_int8_cuda_fwd(k, k_int8, k_scale, BLKK, tensor_layout);
-    }
+
+        // if (tensor_layout == 0) {
+        //     km = km.squeeze(1);
+        // } else {
+        //     km = km.squeeze(2);
+        // }
+    quant_per_block_int8_fuse_sub_mean_cuda_fwd(k, km, k_int8, k_scale, BLKK, tensor_layout);
+
 
     return {q_int8, q_scale, k_int8, k_scale};
 }
@@ -1140,7 +1201,7 @@ std::vector<paddle::Tensor> per_channel_fp8(paddle::Tensor& v,
         kv_len = v.shape()[2];
         head_dim = v.shape()[3];
 
-        padded_len = (kv_len + 63) // 64 * 64
+        padded_len = (kv_len + 63); // 64 * 64
         v_transposed_permutted = paddle::empty({b, h_kv, head_dim, padded_len}, v.dtype());
     } else if (tensor_layout == 0) {
         b = v.shape()[0];
@@ -1148,7 +1209,7 @@ std::vector<paddle::Tensor> per_channel_fp8(paddle::Tensor& v,
         h_kv = v.shape()[2];
         head_dim = v.shape()[3];
 
-        padded_len = (kv_len + 63) // 64 * 64
+        padded_len = (kv_len + 63); // 64 * 64
         v_transposed_permutted = paddle::empty({b, head_dim, h_kv, padded_len}, v.dtype());
     }
     transpose_pad_permute_cuda_fwd(v, v_transposed_permutted, tensor_layout);
@@ -1166,15 +1227,11 @@ std::vector<paddle::Tensor> per_channel_fp8(paddle::Tensor& v,
 }
 
 std::vector<paddle::Tensor> sub_mean(paddle::Tensor& v,
+                                    paddle::Tensor& vm,
                                     int tensor_layout)
 {
-    int tgt_dim = 1;
-    if (tensor_layout == 1) {
-        tgt_dim = 2;
-    }
-    paddle::Tensor vm = v.mean(axis=tgt_dim);
     paddle::Tensor v_smoothed = paddle::empty(v.shape(), paddle::DataType::FLOAT16);
 
     sub_mean_cuda_fwd(v, vm, v_smoothed, tensor_layout);
-    return {v_smoothed, vm}
+    return {v_smoothed, vm};
 }

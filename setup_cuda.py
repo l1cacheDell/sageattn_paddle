@@ -20,7 +20,7 @@ import warnings
 from setuptools import find_packages
 
 # Supported NVIDIA GPU architectures.
-SUPPORTED_ARCHS = {"8.0", "8.6", "8.9", "9.0"}
+SUPPORTED_ARCHS = {"8.0", "8.9", "9.0"}
 
 # Compiler flags.
 CXX_FLAGS = ["-g", "-O3", "-fopenmp", "-lgomp", "-std=c++17", "-DENABLE_BF16"]
@@ -142,15 +142,22 @@ print("=============================================")
 
 source_files = [
     'csrc/sageattn_fused.cu',
-    'csrc/sageattn_qk_int_sv_f16_kernel_sm80.cu', 
-    'csrc/sageattn_qk_int_sv_f8_kernel_sm89.cu',
 ]
 
 for capability in compute_capabilities:
+    print(capability)
     if capability[0] == '9':
         source_files += [
             'csrc/sageattn_qk_int_sv_f8_kernel_sm90.cu',
             'csrc/sageattn_qk_int_sv_f8_dsk_kernel_sm90.cu',
+        ]
+    elif capability[0] == "8" and capability[2] == "0":
+        source_files += [
+            'csrc/sageattn_qk_int_sv_f8_kernel_sm80.cu',
+        ]
+    elif capability[0] == "8" and capability[2] == "9":
+        source_files += [
+            'csrc/sageattn_qk_int_sv_f8_kernel_sm89.cu',
         ]
 
 setup(

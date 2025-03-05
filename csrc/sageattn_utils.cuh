@@ -11,6 +11,7 @@
 #include <type_traits>
 #include <sstream>
 #include <stdexcept>
+#include <vector>
 
 #include "paddle/extension.h"
 
