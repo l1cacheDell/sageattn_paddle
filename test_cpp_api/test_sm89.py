@@ -31,14 +31,7 @@ v = paddle.randn(shape=(bsz, seq_len, num_heads, head_dim), dtype=paddle.float16
 km = paddle.mean(k, axis=1, keepdim=True)
 km = km.squeeze(1) if tensor_layout == "NHD" else km.squeeze(2)
 
-# remember do padding to v!
-v_pad_len = 128 - (seq_len % 128) if seq_len % 128 != 0 else 0
-if v_pad_len > 0:
-    if tensor_layout == "HND":
-        v = paddle.concat([v, paddle.zeros(v.shape[0], v.shape[1], v_pad_len, v.shape[3], dtype=v.dtype, device=v.device)], dim=2)
-    else:
-        v = paddle.concat([v, paddle.zeros(v.shape[0], v_pad_len, v.shape[2], v.shape[3], dtype=v.dtype, device=v.device)], dim=1)
-
+# sm89 kernel
 o1 = sageattn_custom_ops.sage_attention(q, 
                                         k, 
                                         v, 
@@ -46,7 +39,7 @@ o1 = sageattn_custom_ops.sage_attention(q,
                                         None,
                                         head_dim**-0.5,
                                         "per_warp",
-                                        "fp16",
+                                        "fp32+fp32",
                                         tensor_layout=0, 
                                         is_causal=is_causal, 
                                         smooth_k=True, 
