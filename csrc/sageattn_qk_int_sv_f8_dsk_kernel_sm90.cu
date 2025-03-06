@@ -1065,3 +1065,94 @@ PD_BUILD_OP(qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90)
     .SetKernelFn(PD_KERNEL(qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90_fwd))
     .SetInferShapeFn(PD_INFER_SHAPE(qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90_InferShape))
     .SetInferDtypeFn(PD_INFER_DTYPE(qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90_InferDtype));
+
+//
+//  =========== Exposed to Outside API - ARCH: SM90 For Deepseek Prefill ===========
+//
+
+// q: [bsz, seq_len, num_heads, 256] do padding before
+// k: [bsz, seq_len, num_heads, 256] do padding before
+// v: [bsz, seq_len, num_heads, 128]
+std::vector<paddle::Tensor> sage_attention_dsk_fwd(paddle::Tensor& q,
+                                               paddle::Tensor& k,
+                                               paddle::Tensor& v,
+                                               paddle::Tensor& km,
+                                               paddle::optional<paddle::Tensor>& vm,
+                                               float sm_scale,
+                                               std::string qk_quant_gran,
+                                               std::string pv_accum_dtype,
+                                               int tensor_layout,
+                                               bool is_causal,
+                                               bool smooth_k,
+                                               bool smooth_v,
+                                               bool return_lse)
+{
+  int _is_causal = int(is_causal);
+  int _qk_quant_gran = (qk_quant_gran == std::string("per_thread")) ? 3 : 2;
+  int _return_lse = int(return_lse);
+
+  PD_CHECK(q.shape()[3] == 64 || q.shape()[3] == 128 || q.shape()[3] == 256, "head_dim must be either 64, 128 or 256.");
+  PD_CHECK(q.strides()[3] == 1 && k.strides()[3] == 1 && v.strides()[3] == 1, "Last dim of qkv must be contiguous.");
+
+  int seq_dim = (tensor_layout == 0) ? 1 : 2;
+
+  // quant q, k -> q_int8, k_int8
+  constexpr int BLKQ = 64;
+  int WARPQ = 16;
+  constexpr int BLKK = 128;
+  std::vector<paddle::Tensor>&& quant_qk_results = per_warp_int8_cuda(q, k, km, BLKQ, WARPQ, BLKK, tensor_layout); // q_int8, q_scale, k_int8, k_scale
+
+  int v_seq_len = (tensor_layout == 0) ? v.shape()[1] : v.shape()[2];
+  int v_pad_len = (v_seq_len % 128 != 0) ? (128 - v_seq_len % 128) : 0;
+
+  if (v_pad_len > 0) {
+    if (tensor_layout == 0) { // NHD
+      v = paddle::concat({v, paddle::zeros({v.shape()[0], v_pad_len, v.shape()[2], v.shape()[3]}, v.dtype(), v.place())}, 1);
+    } else {
+      v = paddle::concat({v, paddle::zeros({v.shape()[0], v.shape()[1], v_pad_len, v.shape()[3]}, v.dtype(), v.place())}, 2);
+    }
+  }
+
+  paddle::Tensor o = paddle::empty(v.shape(), v.dtype(), paddle::GPUPlace());
+
+  std::vector<paddle::Tensor>&& quant_vfp8_results = per_channel_fp8(v, tensor_layout, 448.0, false);
+  std::vector<paddle::Tensor>&& q_split_tensors = paddle::split(quant_qk_results[0], {128, 64, 64}, 3);
+  std::vector<paddle::Tensor>&& k_split_tensors = paddle::split(quant_qk_results[2], {128, 64, 64}, 3);
+
+  qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90_fwd(q_split_tensors[0], k_split_tensors[0], q_split_tensors[1], k_split_tensors[1], quant_vfp8_results[0], o, quant_qk_results[1], quant_qk_results[3], quant_vfp8_results[1], tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse);
+
+  return {o};
+}
+
+std::vector<std::vector<int64_t>> sage_attention_dsk_InferShape(
+  const std::vector<int64_t> query_shape, 
+  const std::vector<int64_t> key_shape, 
+  const std::vector<int64_t> value_shape,
+  const std::vector<int64_t> km_shape,
+  const paddle::optional<std::vector<int64_t>>& vm_shape) {
+    return {value_shape};
+}
+
+std::vector<paddle::DataType> sage_attention_dsk_InferDtype(
+  const paddle::DataType A_dtype,
+  const paddle::DataType B_dtype,
+  const paddle::DataType C_dtype,
+  const paddle::DataType D_dtype,
+  const paddle::optional<paddle::DataType>& E_dtype) {
+  return {C_dtype};
+}
+
+PD_BUILD_OP(sage_attention_dsk)
+    .Inputs({"q", "k", "v", "km", paddle::Optional("vm")})
+    .Outputs({"o"})
+    .Attrs({"sm_scale: float",
+            "qk_quant_gran: std::string",
+            "pv_accum_dtype: std::string",
+            "tensor_layout: int",
+            "is_causal: bool",
+            "smooth_k: bool",
+            "smooth_v: bool",
+            "return_lse: bool"})
+    .SetKernelFn(PD_KERNEL(sage_attention_dsk_fwd))
+    .SetInferShapeFn(PD_INFER_SHAPE(sage_attention_dsk_InferShape))
+    .SetInferDtypeFn(PD_INFER_DTYPE(sage_attention_dsk_InferDtype));

@@ -146,7 +146,6 @@ source_files = [
 
 for capability in compute_capabilities:
     print(capability)
-    # capability = "8.9"
     if capability[0] == '9':
         source_files += [
             'csrc/sageattn_qk_int_sv_f8_kernel_sm90.cu',

@@ -325,7 +325,7 @@ def sageattn_qk_int8_pv_fp8_cuda_dsk_sm90(
     if v_pad_len > 0:
         if tensor_layout == "HND":
             v = paddle.concat([v, paddle.zeros(shape=[v.shape[0], v.shape[1], v_pad_len, v.shape[3]], dtype=v.dtype)], axis=2)
-        else: 
+        else:
             v = paddle.concat([v, paddle.zeros(shape=[v.shape[0], v_pad_len, v.shape[2], v.shape[3]], dtype=v.dtype)], axis=1)
 
     v_fp8, v_scale, _ = per_channel_fp8(v, tensor_layout=tensor_layout, smooth_v=False)
