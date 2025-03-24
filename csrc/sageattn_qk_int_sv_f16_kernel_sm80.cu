@@ -1612,7 +1612,7 @@ std::vector<paddle::Tensor>  qk_int8_sv_f16_accum_f32_attn_varlen_fwd(paddle::Te
               query_scale.data<float>(),
               key_scale.data<float>(),
               nullptr,
-              cu_seqlen.data<uint32_t>(),
+              reinterpret_cast<uint32_t*>(cu_seqlen.data()),
               qo_len,
               kv_len,
               num_kv_groups,
