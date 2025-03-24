@@ -4,14 +4,14 @@ import paddle
 total_seq_len, num_heads, head_dim = 10, 24, 64
 # data = paddle.randn([total_seq_len, num_heads, head_dim], dtype='float32')
 
-data1 = paddle.ones([3, num_heads, head_dim], dtype='float32')
-data2 = paddle.ones([3, num_heads, head_dim], dtype='float32') * 2
-data3 = paddle.ones([4, num_heads, head_dim], dtype='float32') * 5
+data1 = paddle.ones([3, num_heads, head_dim], dtype='float16')
+data2 = paddle.ones([2, num_heads, head_dim], dtype='float16') * 2.5
+data3 = paddle.ones([5, num_heads, head_dim], dtype='float16') * 5.8375
 
 data = paddle.concat([data1, data2, data3], axis=0)
 
 # 假设 cu_seqlen 是累积的序列长度
-cu_seqlen = paddle.to_tensor([0, 3, 6, 10], dtype='int32')  # 累积长度
+cu_seqlen = paddle.to_tensor([0, 3, 5, 10], dtype='int32')  # 累积长度
 
 # 计算每个子序列的长度
 segment_lengths = paddle.concat([cu_seqlen[:1], cu_seqlen[1:] - cu_seqlen[:-1]])[1:]

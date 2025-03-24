@@ -83,6 +83,39 @@ def per_warp_int8(
     return q_int8, q_scale, k_int8, k_scale
 
 
+# def per_warp_varlen_int8(
+#     q: paddle.Tensor, # [total_seqlen_q, num_head, head_dim]
+#     k: paddle.Tensor, # [total_seqlen_k, num_head, head_dim]
+#     cu_seqlen: paddle.Tensor,
+#     BLKQ: int =128,
+#     WARPQ: int =32,
+#     BLKK: int =64,
+#     tensor_layout: str ="NHD"
+# ):
+#     q_int8 = paddle.empty(shape=q.shape, dtype=paddle.int8)
+#     k_int8 = paddle.empty(shape=k.shape, dtype=paddle.int8)
+
+#     total_qo_len, h_qo, head_dim = q.shape
+#     total_kv_len, h_kv, _ = k.shape
+
+#     b = cu_seqlen.shape[0] - 1
+    
+#     _tensor_layout = 0 if tensor_layout == "NHD" else 1
+
+#     q_scale = paddle.empty((b, h_qo, ((total_qo_len + BLKQ - 1) // BLKQ) * (BLKQ // WARPQ)), dtype=paddle.float32)
+#     k_scale = paddle.empty((b, h_kv, (total_kv_len + BLKK - 1) // BLKK), dtype=paddle.float32)
+
+#     sageattn_custom_ops.per_warp_int8_varlen_cuda(q, q_int8, q_scale, BLKQ, WARPQ, _tensor_layout)
+
+#     if km is not None:
+#         km = km.squeeze(1) if _tensor_layout == 0 else km.squeeze(2)
+#         sageattn_custom_ops.quant_per_block_int8_fuse_sub_mean_cuda(k, km, k_int8, k_scale, BLKK, _tensor_layout)
+#     else:
+#         sageattn_custom_ops.quant_per_block_int8_cuda(k, k_int8, k_scale, BLKK, _tensor_layout)
+    
+#     return q_int8, q_scale, k_int8, k_scale
+
+
 def per_channel_fp8(
     v: paddle.Tensor,
     tensor_layout: str ="NHD",

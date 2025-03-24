@@ -453,7 +453,7 @@ template <uint32_t head_dim, uint32_t CTA_SIZE, bool pad_zero=false, typename T>
 __global__ void TransposePadPermuteVarlenKernel(T *__restrict__ input, // padded_total_seqlen x h_kv x head_dim
                             T *__restrict__ output,   // head_dim x h_kv x padded_total_seqlen
                             uint32_t *__restrict__ cu_seqlen,
-                            int *__restrict__ padded_seqlen,
+                            uint32_t *__restrict__ padded_seqlen,
                             const uint32_t num_tokens,
                             const uint32_t stride_seq_input, const uint32_t stride_h_input,
                             const uint32_t stride_d_output, const uint32_t stride_h_output)
@@ -734,7 +734,7 @@ void quant_per_block_int8_fuse_sub_mean_varlen_cuda_fwd(
                 paddle::Tensor& mean,   // bsz x num_heads x head_dim
                 paddle::Tensor& output, // total_seq_len x num_heads x head_dim
                 paddle::Tensor& scale,  // bsz x num_heads x (total_seq_len + BLOCK_SIZE - 1) / BLOCK_SIZE
-                paddle::Tensor& cu_seqlen_q,
+                paddle::Tensor& cu_seqlen,
                 int max_seq_len_q,
                 int block_size)
 {
@@ -759,13 +759,13 @@ void quant_per_block_int8_fuse_sub_mean_varlen_cuda_fwd(
   const int batch_size = cu_seqlen.shape()[0] - 1;
   const int head_dim = input.shape()[2];
 
-  const int num_tokens = max_seq_len_q;
-  const int num_heads = input.shape()[1];
+  int num_tokens = max_seq_len_q;
+  int num_heads = input.shape()[1];
 
-  const int stride_seq_input = input.strides()[0];
-  const int stride_h_input = input.strides()[1];
-  const int stride_seq_output = output.strides()[0];
-  const int stride_h_output = output.strides()[1];
+  int stride_seq_input = input.strides()[0];
+  int stride_h_input = input.strides()[1];
+  int stride_seq_output = output.strides()[0];
+  int stride_h_output = output.strides()[1];
 
   auto input_dtype = input.dtype();
   auto mean_dtype = mean.dtype();
@@ -790,7 +790,6 @@ void quant_per_block_int8_fuse_sub_mean_varlen_cuda_fwd(
           reinterpret_cast<float*>(scale.data()),
           reinterpret_cast<uint32_t*>(cu_seqlen.data()),
           0.0f,
-          num_tokens,
           stride_seq_input, stride_h_input,
           mean.strides()[0], mean.strides()[1],
           stride_seq_output, stride_h_output,
@@ -937,7 +936,6 @@ void quant_per_warp_int8_varlen_cuda_fwd(
             reinterpret_cast<float*>(scale.data()),
             reinterpret_cast<uint32_t*>(cu_seqlen_q.data()),
             0.0,
-            num_tokens,
             stride_seq_input, stride_h_input,
             0, 0,
             stride_seq_output, stride_h_output,
@@ -1273,8 +1271,8 @@ void transpose_pad_permute_cuda_fwd(
 void transpose_pad_permute_varlen_cuda_fwd(
                 paddle::Tensor& input,        // padded_total_seq_len x h_kv x head_dim
                 paddle::Tensor& output,       // head_dim x h_kv x padded_total_seq_len
-                paddle::Tenosr& cu_seqlen,
-                int *padded_seqlen,
+                paddle::Tensor& cu_seqlen,
+                paddle::Tensor& padded_seqlen,
                 int max_seq_len_v,
                 int tensor_layout)
 {
@@ -1304,10 +1302,6 @@ void transpose_pad_permute_varlen_cuda_fwd(
   auto input_dtype = input.dtype();
   auto output_dtype = output.dtype();
 
-  int* d_padded_seqlen;
-  cudaMalloc((void**)&d_padded_seqlen, (batch_size + 1) * sizeof(int));
-  cudaMemcpy(d_padded_seqlen, padded_seqlen, (batch_size + 1) * sizeof(int), cudaMemcpyHostToDevice);
-
   PD_CHECK(input_dtype == output_dtype, "Input and output must have the same data type");
 
   DISPATCH_PADDLE_DTYPE_TO_CTYPE_FP16(input_dtype, c_type, {
@@ -1321,15 +1315,14 @@ void transpose_pad_permute_varlen_cuda_fwd(
       TransposePadPermuteVarlenKernel<HEAD_DIM, CTA_SIZE, true, c_type><<<grid, block>>>(
         reinterpret_cast<c_type*>(input.data()),
         reinterpret_cast<c_type*>(output.data()),
-        reinterpret_cast<uint32_t*>(cu_seqlen.data()), d_padded_seqlen,
+        reinterpret_cast<uint32_t*>(cu_seqlen.data()), 
+        reinterpret_cast<uint32_t*>(padded_seqlen.data()), 
         num_tokens,
         stride_seq_input, stride_h_input,
         stride_d_output, stride_h_output
       );
     });
   });
-
-  cudaFree(d_padded_seqlen);
 }
 
 void scale_fuse_quant_cuda_fwd(
@@ -1545,7 +1538,7 @@ std::vector<paddle::Tensor> per_warp_int8_cuda(paddle::Tensor& q,
     return {q_int8, q_scale, k_int8, k_scale};
 }
 
-std::vector<paddle::Tensor> per_warp_int8_varlen_cuda(paddle::Tensor& q,  // total_seqlen x num_head x head_dim
+std::vector<paddle::Tensor> per_warp_int8_varlen_cuda_fwd(paddle::Tensor& q,  // total_seqlen x num_head x head_dim
                                                     paddle::Tensor& k,    // total_seqlen x num_head x head_dim
                                                     paddle::Tensor& cu_seqlen_q,
                                                     paddle::Tensor& segment_ids,
@@ -1585,6 +1578,8 @@ std::vector<paddle::Tensor> per_warp_int8_varlen_cuda(paddle::Tensor& q,  // tot
 
     return {q_int8, q_scale, k_int8, k_scale};
 }
+
+// register this func
 
 std::vector<paddle::Tensor> per_channel_fp8(paddle::Tensor& v,
                                             int tensor_layout,
@@ -1626,29 +1621,21 @@ std::vector<paddle::Tensor> per_channel_fp8(paddle::Tensor& v,
 
 std::vector<paddle::Tensor> per_channel_varlen_fp8(paddle::Tensor& v, // total_seqlen x num_head x head_dim
                                                   paddle::Tensor& cu_seqlen_v,
+                                                  paddle::Tensor& padded_seqlen,  // the same shape as cu_seq_len_v
                                                   int max_seq_len_v,
+                                                  int max_seq_len_v_padded,
                                                   int tensor_layout,
                                                   float scale_max,
                                                   bool smooth_v)
 {
-    int b, head_dim, h_kv, kv_len, padded_len;
-    
     int b = cu_seqlen_v.shape()[0] - 1;
     int head_dim = v.shape()[2];
     int h_kv = v.shape()[1];
     int kv_len = max_seq_len_v;
     int padded_len = (kv_len + 63) / 64 * 64;
 
-    int padded_total_seq_len = 0;
-    int* padded_seqlen = new int[b + 1];
-    padded_seqlen[0] = 0;
-    for (int i = 0; i < b; i++) {
-      // pad each seq_len to multiple of 64
-      int padded_len = (cu_seqlen_v[i + 1] - cu_seqlen_v[i] + 63) / 64 * 64
-      padded_total_seq_len += padded_len;
-      padded_seqlen[i + 1] = padded_total_seq_len;
-    }
-    
+    int padded_total_seq_len = max_seq_len_v_padded;
+
     paddle::Tensor v_transposed_permutted = paddle::empty({head_dim, h_kv, padded_total_seq_len}, v.dtype(), paddle::GPUPlace());
     
     transpose_pad_permute_varlen_cuda_fwd(v, v_transposed_permutted, cu_seqlen_v, padded_seqlen,
@@ -1662,8 +1649,6 @@ std::vector<paddle::Tensor> per_channel_varlen_fp8(paddle::Tensor& v, // total_s
     } else {
         scale_fuse_quant_cuda_fwd(v_transposed_permutted, v_fp8, v_scale, kv_len, scale_max, tensor_layout);
     }
-
-    delete[] padded_seqlen;
 
     return {v_fp8, v_scale, vm};
 }
