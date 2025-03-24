@@ -773,50 +773,6 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_attn_inst_buf_dsk_sm90_fwd(
   return {lse};
 }
 
-std::vector<std::vector<int64_t>> qk_int8_sv_f8_accum_f32_attn_inst_buf_dsk_sm90_InferShape(
-  std::vector<int64_t> query_shape, 
-  std::vector<int64_t> key_shape, 
-  std::vector<int64_t> query_pe_shape, 
-  std::vector<int64_t> key_pe_shape, 
-  std::vector<int64_t> value_shape, 
-  std::vector<int64_t> output_shape, 
-  std::vector<int64_t> query_scale_shape, 
-  std::vector<int64_t> key_scale_shape) {
-
-    // force layout: NHD: [bsz, seq_len, num_heads, head_dim]
-    int64_t bsz = query_shape[0];
-    int64_t seq_len = query_shape[1];
-    int64_t h_qo = query_shape[2];
-
-    std::vector<int64_t> return_shape = {bsz, h_qo, seq_len};
-    return {return_shape};
-}
-
-std::vector<paddle::DataType> qk_int8_sv_f8_accum_f32_attn_inst_buf_dsk_sm90_InferDtype(
-  paddle::DataType A_dtype,
-  paddle::DataType B_dtype,
-  paddle::DataType C_dtype,
-  paddle::DataType D_dtype,
-  paddle::DataType E_dtype,
-  paddle::DataType F_dtype,
-  paddle::DataType G_dtype,
-  paddle::DataType H_dtype) {
-  return {paddle::DataType::FLOAT32};
-}
-
-PD_BUILD_OP(qk_int8_sv_f8_accum_f32_attn_inst_buf_dsk_sm90)
-    .Inputs({"query", "key", "query_pe", "key_pe", "value", "output", "query_scale", "key_scale"})
-    .Outputs({"out", "lse"})
-    .SetInplaceMap({{"output", "out"}}) // Inplace
-    .Attrs({"tensor_layout: int",
-            "is_causal: int",
-            "qk_quant_gran: int",
-            "sm_scale: float",
-            "return_lse: int"})
-    .SetKernelFn(PD_KERNEL(qk_int8_sv_f8_accum_f32_attn_inst_buf_dsk_sm90_fwd))
-    .SetInferShapeFn(PD_INFER_SHAPE(qk_int8_sv_f8_accum_f32_attn_inst_buf_dsk_sm90_InferShape))
-    .SetInferDtypeFn(PD_INFER_DTYPE(qk_int8_sv_f8_accum_f32_attn_inst_buf_dsk_sm90_InferDtype));
-
 std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90_fwd(
                     paddle::Tensor& query,
                     paddle::Tensor& key,
@@ -1020,52 +976,6 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_d
   return {lse};
 }
 
-std::vector<std::vector<int64_t>> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90_InferShape(
-  std::vector<int64_t> query_shape, 
-  std::vector<int64_t> key_shape, 
-  std::vector<int64_t> query_pe_shape, 
-  std::vector<int64_t> key_pe_shape, 
-  std::vector<int64_t> value_shape, 
-  std::vector<int64_t> output_shape, 
-  std::vector<int64_t> query_scale_shape, 
-  std::vector<int64_t> key_scale_shape,
-  std::vector<int64_t> value_scale_shape) {
-
-    // force layout: NHD: [bsz, seq_len, num_heads, head_dim]
-    int64_t bsz = query_shape[0];
-    int64_t seq_len = query_shape[1];
-    int64_t h_qo = query_shape[2];
-
-    std::vector<int64_t> return_shape = {bsz, h_qo, seq_len};
-    return {return_shape};
-}
-
-std::vector<paddle::DataType> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90_InferDtype(
-  paddle::DataType A_dtype,
-  paddle::DataType B_dtype,
-  paddle::DataType C_dtype,
-  paddle::DataType D_dtype,
-  paddle::DataType E_dtype,
-  paddle::DataType F_dtype,
-  paddle::DataType G_dtype,
-  paddle::DataType H_dtype,
-  paddle::DataType I_dtype) {
-  return {paddle::DataType::FLOAT32};
-}
-
-PD_BUILD_OP(qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90)
-    .Inputs({"query", "key", "query_pe", "key_pe", "value", "output", "query_scale", "key_scale", "value_scale"})
-    .Outputs({"out", "lse"})
-    .SetInplaceMap({{"output", "out"}}) // Inplace
-    .Attrs({"tensor_layout: int",
-            "is_causal: int",
-            "qk_quant_gran: int",
-            "sm_scale: float",
-            "return_lse: int"})
-    .SetKernelFn(PD_KERNEL(qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90_fwd))
-    .SetInferShapeFn(PD_INFER_SHAPE(qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90_InferShape))
-    .SetInferDtypeFn(PD_INFER_DTYPE(qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90_InferDtype));
-
 //
 //  =========== Exposed to Outside API - ARCH: SM90 For Deepseek Prefill ===========
 //
@@ -1075,6 +985,8 @@ PD_BUILD_OP(qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90)
 // v: [bsz, seq_len, num_heads, 128]
 std::vector<paddle::Tensor> sage_attention_dsk_fwd(paddle::Tensor& q,
                                                paddle::Tensor& k,
+                                               paddle::Tensor& q_seq_indices,
+                                               paddle::Tensor& k_seq_indices,
                                                paddle::Tensor& v,
                                                paddle::Tensor& km,
                                                paddle::optional<paddle::Tensor>& vm,
@@ -1095,6 +1007,8 @@ std::vector<paddle::Tensor> sage_attention_dsk_fwd(paddle::Tensor& q,
   PD_CHECK(q.strides()[3] == 1 && k.strides()[3] == 1 && v.strides()[3] == 1, "Last dim of qkv must be contiguous.");
 
   int seq_dim = (tensor_layout == 0) ? 1 : 2;
+
+  auto km2 = k.mean(1, {}, true);
 
   // quant q, k -> q_int8, k_int8
   constexpr int BLKQ = 64;
@@ -1119,7 +1033,10 @@ std::vector<paddle::Tensor> sage_attention_dsk_fwd(paddle::Tensor& q,
   std::vector<paddle::Tensor>&& q_split_tensors = paddle::split(quant_qk_results[0], {128, 64, 64}, 3);
   std::vector<paddle::Tensor>&& k_split_tensors = paddle::split(quant_qk_results[2], {128, 64, 64}, 3);
 
-  qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90_fwd(q_split_tensors[0], k_split_tensors[0], q_split_tensors[1], k_split_tensors[1], quant_vfp8_results[0], o, quant_qk_results[1], quant_qk_results[3], quant_vfp8_results[1], tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse);
+  qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_dsk_sm90_fwd(q_split_tensors[0], k_split_tensors[0], q_split_tensors[1], k_split_tensors[1], 
+                                                                  quant_vfp8_results[0], o, 
+                                                                  quant_qk_results[1], quant_qk_results[3], quant_vfp8_results[1], 
+                                                                  tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse);
 
   return {o};
 }

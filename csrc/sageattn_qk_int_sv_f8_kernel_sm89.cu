@@ -1560,8 +1560,8 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_s
 
             cudaFuncSetAttribute(kernel_func, cudaFuncAttributeMaxDynamicSharedMemorySize, smem_max);
 
-            dim3 grid(div_ceil(qo_len, CTA_Q), num_qo_heads, batch_size);
-            dim3 block(32, (CTA_Q / WARP_Q) * (CTA_K / WARP_K));
+            dim3 grid(div_ceil(qo_len, CTA_Q), num_qo_heads, batch_size); // block
+            dim3 block(32, (CTA_Q / WARP_Q) * (CTA_K / WARP_K));  // thread
 
             kernel_func<<<grid, block, smem_max>>>(
               query.data<int8_t>(), 
