@@ -191,11 +191,11 @@ __global__ void QuantInt8Kernel(T *__restrict__ input, T *__restrict__ mean, int
 
 template <uint32_t head_dim, uint32_t BLOCK_SIZE, uint32_t num_pack_per_thread = 1, bool has_sm_scale = false, bool sub_mean = false, typename T>
 __global__ void QuantInt8Kernel_Varlen(T *__restrict__ input, T *__restrict__ mean, int8_t *__restrict__ output, float *__restrict__ scale, 
-                            int8_t *__restrict__ cu_seqlen,
+                            uint32_t *__restrict__ cu_seqlen,
                             float sm_scale,
-                            const uint32_t stride_bz_input, const uint32_t stride_seq_input, const uint32_t stride_h_input,
+                            const uint32_t stride_seq_input, const uint32_t stride_h_input,
                             const uint32_t stride_bz_mean, const uint32_t stride_h_mean,
-                            const uint32_t stride_bz_output, const uint32_t stride_seq_output, const uint32_t stride_h_output,
+                            const uint32_t stride_seq_output, const uint32_t stride_h_output,
                             const uint32_t stride_bz_scale, const uint32_t stride_h_scale)
 {
   static_assert(std::is_same<T, half>::value || std::is_same<T, nv_bfloat16>::value, "Only half and bfloat16 are supported");
@@ -666,6 +666,78 @@ void quant_per_block_int8_fuse_sub_mean_cuda_fwd(
   });
 }
 
+void quant_per_block_int8_fuse_sub_mean_varlen_cuda_fwd(
+                paddle::Tensor& input,  // total_seq_len x num_heads x head_dim
+                paddle::Tensor& mean,   // bsz x num_heads x head_dim
+                paddle::Tensor& output, // total_seq_len x num_heads x head_dim
+                paddle::Tensor& scale,  // bsz x num_heads x (total_seq_len + BLOCK_SIZE - 1) / BLOCK_SIZE
+                paddle::Tensor& cu_seqlen_q,
+                int max_seq_len_q,
+                int block_size)
+{
+  CHECK_CUDA(input);
+  CHECK_CUDA(mean);
+  CHECK_CUDA(output);
+  CHECK_CUDA(scale);
+  
+  CHECK_DTYPE(output, paddle::DataType::INT8);
+  CHECK_DTYPE(scale, paddle::DataType::FLOAT32);
+
+  CHECK_LASTDIM_CONTIGUOUS(input);
+  CHECK_CONTIGUOUS(mean);
+  CHECK_CONTIGUOUS(output);
+  CHECK_CONTIGUOUS(scale);
+
+  CHECK_DIMS(input, 3);
+  CHECK_DIMS(mean, 3);
+  CHECK_DIMS(output, 3);
+  CHECK_DIMS(scale, 3);
+
+  const int batch_size = cu_seqlen.shape()[0] - 1;
+  const int head_dim = input.shape()[2];
+
+  const int num_tokens = max_seq_len_q;
+  const int num_heads = input.shape()[1];
+
+  const int stride_seq_input = input.strides()[0];
+  const int stride_h_input = input.strides()[1];
+  const int stride_seq_output = output.strides()[0];
+  const int stride_h_output = output.strides()[1];
+
+  auto input_dtype = input.dtype();
+  auto mean_dtype = mean.dtype();
+
+  PD_CHECK(input_dtype == mean_dtype, "Input and mean must have the same data type");
+  DISPATCH_PADDLE_DTYPE_TO_CTYPE_FP16(input_dtype, c_type, {
+    DISPATCH_BLOCK_SIZE(block_size, BLOCK_SIZE, {
+      DISPATCH_HEAD_DIM_QK(head_dim, HEAD_DIM, {
+        CHECK_SHAPE(mean, batch_size, num_heads, head_dim);
+        CHECK_SHAPE(output, input.shape()[0], input.shape()[1], input.shape()[2]);
+        CHECK_SHAPE(scale, batch_size, num_heads, (num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE);
+
+        dim3 grid((num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE, num_heads, batch_size);
+
+        constexpr int num_pack_per_thread = (BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024;
+
+        dim3 block(BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
+        QuantInt8Kernel_Varlen<HEAD_DIM, BLOCK_SIZE, num_pack_per_thread, false, true, c_type><<<grid, block>>>(
+          reinterpret_cast<c_type*>(input.data()),
+          reinterpret_cast<c_type*>(mean.data()),
+          output.data<int8_t>(),
+          reinterpret_cast<float*>(scale.data()),
+          reinterpret_cast<uint32_t*>(cu_seqlen.data()),
+          0.0f,
+          num_tokens,
+          stride_seq_input, stride_h_input,
+          mean.strides()[0], mean.strides()[1],
+          stride_seq_output, stride_h_output,
+          scale.strides()[0], scale.strides()[1]
+        );
+      });
+    });
+  });
+}
+
 void quant_per_warp_int8_cuda_fwd(
                 paddle::Tensor& input,
                 paddle::Tensor& output,
@@ -739,6 +811,73 @@ void quant_per_warp_int8_cuda_fwd(
             stride_bz_input, stride_seq_input, stride_h_input,
             0, 0,
             stride_bz_output, stride_seq_output, stride_h_output,
+            scale.strides()[0], scale.strides()[1]
+          );
+        });
+      });
+    });
+  });
+}
+
+
+void quant_per_warp_int8_varlen_cuda_fwd(
+                paddle::Tensor& input,  // total_seqlen x num_head x head_dim
+                paddle::Tensor& output, // total_seqlen x num_head x head_dim
+                paddle::Tensor& scale,  // bsz x num_head x max_seq_len
+                paddle::Tensor& cu_seqlen_q,
+                int max_seq_len_q,
+                int block_size,
+                int warp_block_size)
+{
+  CHECK_CUDA(input);
+  CHECK_CUDA(output);
+  CHECK_CUDA(scale);
+  
+  CHECK_DTYPE(output, paddle::DataType::INT8);
+  CHECK_DTYPE(scale, paddle::DataType::FLOAT32);
+
+  CHECK_LASTDIM_CONTIGUOUS(input);
+  CHECK_CONTIGUOUS(output);
+  CHECK_CONTIGUOUS(scale);
+
+  CHECK_DIMS(input, 3);   // not bsz dim now
+  CHECK_DIMS(output, 3);  // not bsz dim now
+  CHECK_DIMS(scale, 3);
+
+  const int batch_size = cu_seqlen_q.shape()[0] - 1;
+  const int head_dim = input.shape()[2];
+
+  const int num_tokens = max_seq_len_q;
+  const int num_heads = input.shape()[1];
+
+  const int stride_seq_input = input.strides()[0];
+  const int stride_h_input = input.strides()[1];
+  const int stride_seq_output = output.strides()[0];
+  const int stride_h_output = output.strides()[1];
+
+  auto input_dtype = input.dtype();
+
+  DISPATCH_PADDLE_DTYPE_TO_CTYPE_FP16(input_dtype, c_type, {
+    DISPATCH_WARP_BLOCK_SIZE(warp_block_size, WARP_BLOCK_SIZE, {
+      DISPATCH_BLOCK_SIZE(block_size, BLOCK_SIZE, {
+        DISPATCH_HEAD_DIM_QK(head_dim, HEAD_DIM, {
+          CHECK_SHAPE(output, input.shape()[0], input.shape()[1], input.shape()[2]);
+          CHECK_SHAPE(scale, batch_size, num_heads, (num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE * (BLOCK_SIZE / WARP_BLOCK_SIZE));
+          dim3 grid((num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE * (BLOCK_SIZE / WARP_BLOCK_SIZE), num_heads, batch_size);
+          constexpr int num_pack_per_thread = (WARP_BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024;
+          dim3 block(WARP_BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
+
+          QuantInt8Kernel_Varlen<HEAD_DIM, WARP_BLOCK_SIZE, num_pack_per_thread, false, false, c_type><<<grid, block>>>(
+            reinterpret_cast<c_type*>(input.data()),
+            nullptr,
+            output.data<int8_t>(),
+            reinterpret_cast<float*>(scale.data()),
+            reinterpret_cast<uint32_t*>(cu_seqlen_q.data()),
+            0.0,
+            num_tokens,
+            stride_seq_input, stride_h_input,
+            0, 0,
+            stride_seq_output, stride_h_output,
             scale.strides()[0], scale.strides()[1]
           );
         });
@@ -1270,15 +1409,53 @@ std::vector<paddle::Tensor> per_warp_int8_cuda(paddle::Tensor& q,
     paddle::Tensor q_scale = paddle::empty({b, h_qo, ((qo_len + BLKQ - 1) / BLKQ) * (BLKQ / WARPQ)}, paddle::DataType::FLOAT32, paddle::GPUPlace());
     paddle::Tensor k_scale = paddle::empty({b, h_kv, ((kv_len + BLKK - 1) / BLKK)}, paddle::DataType::FLOAT32, paddle::GPUPlace());
 
+    // quant q -> q_int8
     quant_per_warp_int8_cuda_fwd(q, q_int8, q_scale, BLKQ, WARPQ, tensor_layout);
 
-        // if (tensor_layout == 0) {
-        //     km = km.squeeze(1);
-        // } else {
-        //     km = km.squeeze(2);
-        // }
+    // quant k -> k_int8
     quant_per_block_int8_fuse_sub_mean_cuda_fwd(k, km, k_int8, k_scale, BLKK, tensor_layout);
 
+
+    return {q_int8, q_scale, k_int8, k_scale};
+}
+
+std::vector<paddle::Tensor> per_warp_int8_varlen_cuda(paddle::Tensor& q,  // total_seqlen x num_head x head_dim
+                                                    paddle::Tensor& k,    // total_seqlen x num_head x head_dim
+                                                    paddle::Tensor& cu_seqlen_q,
+                                                    paddle::Tensor& segment_ids,
+                                                    int max_seq_len_q,
+                                                    int max_seq_len_k,
+                                                    int BLKQ,
+                                                    int WARPQ,
+                                                    int BLKK) 
+{
+    paddle::Tensor q_int8 = paddle::empty(q.shape(), paddle::DataType::INT8, paddle::GPUPlace());
+    paddle::Tensor k_int8 = paddle::empty(k.shape(), paddle::DataType::INT8, paddle::GPUPlace());
+
+    int b = cu_seqlen_q.shape()[0] - 1;
+
+    int h_qo = q.shape()[1];
+    int qo_len = max_seq_len_q;
+    int h_kv = k.shape()[1];
+    int kv_len = max_seq_len_k;
+
+    int head_dim = q.shape()[2];
+
+    paddle::Tensor q_scale = paddle::empty({b, h_qo, ((qo_len + BLKQ - 1) / BLKQ) * (BLKQ / WARPQ)}, paddle::DataType::FLOAT32, paddle::GPUPlace());
+    paddle::Tensor k_scale = paddle::empty({b, h_kv, ((kv_len + BLKK - 1) / BLKK)}, paddle::DataType::FLOAT32, paddle::GPUPlace());
+
+    // quant q -> q_int8
+    quant_per_warp_int8_varlen_cuda_fwd(q, q_int8, q_scale, 
+                                        cu_seqlen_q,
+                                        max_seq_len_q, BLKQ, WARPQ);
+
+    // compute k_mean
+    paddle::Tensor km = paddle::experimental::segment_pool(k, segment_ids, "MEAN");
+
+    // quant k -> k_int8
+    quant_per_block_int8_fuse_sub_mean_varlen_cuda_fwd(k, km, k_int8, k_scale, 
+                                                        cu_seqlen_q,
+                                                        max_seq_len_q, BLKK);
 
     return {q_int8, q_scale, k_int8, k_scale};
 }
@@ -1307,6 +1484,37 @@ std::vector<paddle::Tensor> per_channel_fp8(paddle::Tensor& v,
         padded_len = (kv_len + 63) / 64 * 64;
         v_transposed_permutted = paddle::empty({b, head_dim, h_kv, padded_len}, v.dtype(), paddle::GPUPlace());
     }
+    transpose_pad_permute_cuda_fwd(v, v_transposed_permutted, tensor_layout);
+
+    paddle::Tensor v_fp8 = paddle::empty(v_transposed_permutted.shape(), paddle::DataType::FLOAT8_E4M3FN, paddle::GPUPlace());
+    paddle::Tensor v_scale = paddle::empty({b, h_kv, head_dim}, paddle::DataType::FLOAT32, paddle::GPUPlace());
+    paddle::Tensor vm = paddle::empty({b, h_kv, head_dim}, paddle::DataType::FLOAT32, paddle::GPUPlace());
+    if (smooth_v) {
+        mean_scale_fuse_quant_cuda_fwd(v_transposed_permutted, v_fp8, vm, v_scale, kv_len, scale_max, tensor_layout);
+    } else {
+        scale_fuse_quant_cuda_fwd(v_transposed_permutted, v_fp8, v_scale, kv_len, scale_max, tensor_layout);
+    }
+
+    return {v_fp8, v_scale, vm};
+}
+
+std::vector<paddle::Tensor> per_channel_varlen_fp8(paddle::Tensor& v, // total_seqlen x num_head x head_dim
+                                                  paddle::Tensor& cu_seqlen_v,
+                                                  int max_seq_len_v,
+                                                  int tensor_layout,
+                                                  float scale_max,
+                                                  bool smooth_v)
+{
+    int b, head_dim, h_kv, kv_len, padded_len;
+    
+    int b = cu_seqlen_v.shape()[0] - 1;
+    int head_dim = v.shape()[2];
+    int h_kv = v.shape()[1];
+    int kv_len = max_seq_len_v;
+    int padded_len = (kv_len + 63) / 64 * 64;
+
+    paddle::Tensor v_transposed_permutted = paddle::empty({b, h_kv, head_dim, padded_len}, v.dtype(), paddle::GPUPlace());
+    
     transpose_pad_permute_cuda_fwd(v, v_transposed_permutted, tensor_layout);
 
     paddle::Tensor v_fp8 = paddle::empty(v_transposed_permutted.shape(), paddle::DataType::FLOAT8_E4M3FN, paddle::GPUPlace());
