@@ -1595,8 +1595,7 @@ std::vector<paddle::Tensor>  qk_int8_sv_f16_accum_f32_attn_varlen_fwd(paddle::Te
             //                                     smem_Q                                     smem_K                            smem_V                     smem_O
             size_t smem_max = std::max(CTA_Q * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(half), CTA_Q * HEAD_DIM * sizeof(half));
             
-            auto kernel_func = qk_int_sv_f16_attn_varlen_kernel<CTA_Q, CTA_K, WARP_Q, WARP_K, HEAD_DIM, SADataType::kInt8, static_cast<QuantGranularity>(QK_QUANT_GRAN), static_cast<QuantGranularity>(QK_QUANT_GRAN), float, false, DTypeOut, ComputeUnit::kTensorCore, 
-                                                          mask_mode, RETURN_LSE, false>;
+            auto kernel_func = qk_int_sv_f16_attn_varlen_kernel<CTA_Q, CTA_K, WARP_Q, WARP_K, HEAD_DIM, SADataType::kInt8, static_cast<QuantGranularity>(QK_QUANT_GRAN), static_cast<QuantGranularity>(QK_QUANT_GRAN), float, false, DTypeOut, ComputeUnit::kTensorCore, mask_mode, RETURN_LSE, false>;
 
             cudaFuncSetAttribute(kernel_func, cudaFuncAttributeMaxDynamicSharedMemorySize, smem_max);
 
@@ -2331,7 +2330,7 @@ std::vector<paddle::Tensor> sage_attention_varlen_fwd(paddle::Tensor& q,  // tot
     }
   }
 
-  return {o};
+  return {o, quant_results[0]};
 }
 
 std::vector<std::vector<int64_t>> sage_attention_varlen_InferShape(
@@ -2341,7 +2340,7 @@ std::vector<std::vector<int64_t>> sage_attention_varlen_InferShape(
   const std::vector<int64_t> cu_seqlen_shape,
   const std::vector<int64_t> segment_ids_shape,
   const paddle::optional<std::vector<int64_t>>& vm_shape) {
-    return {value_shape};
+    return {value_shape, query_shape};
 }
 
 std::vector<paddle::DataType> sage_attention_varlen_InferDtype(
@@ -2351,12 +2350,12 @@ std::vector<paddle::DataType> sage_attention_varlen_InferDtype(
   const paddle::DataType D_dtype,
   const paddle::DataType E_dtype,
   const paddle::optional<paddle::DataType>& F_dtype) {
-  return {C_dtype};
+  return {C_dtype, paddle::DataType::INT8};
 }
 
 PD_BUILD_OP(sage_attention_varlen)
     .Inputs({"q", "k", "v", "cu_seqlen", "segment_ids", paddle::Optional("vm")})
-    .Outputs({"o"})
+    .Outputs({"o", "q_int8"})
     .Attrs({"max_seqlen_q: int",
             "max_seqlen_k: int",
             "sm_scale: float",

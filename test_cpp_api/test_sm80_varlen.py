@@ -46,7 +46,7 @@ segment_ids = paddle.concat([paddle.full([length], i, dtype='int32') for i, leng
 max_seqlen = 1048 - 394
 
 # sm80 kernel
-o1 = sageattn_custom_ops.sage_attention_varlen(q, 
+o1, q_int8 = sageattn_custom_ops.sage_attention_varlen(q, 
                                                 k, 
                                                 v, 
                                                 cu_seqlens,
@@ -97,7 +97,8 @@ o2 = paddle.concat([o_set_1, o_set_2, o_set_3], axis=1).squeeze(0)
 
 print(o2.shape)
 print(o1.shape)
-print(o1)
+# print(o1)
+print(q_int8)
 print(paddle.max(o1-o2))
 
 # o2 = paddle.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=is_causal)
