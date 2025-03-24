@@ -17,7 +17,7 @@ def precision_cmp_paddle(t1: paddle.Tensor, t2: paddle.Tensor):
 
 bsz = 2
 seq_len = 1024
-num_heads = 128
+num_heads = 24
 head_dim = 128
 
 tensor_layout = "NHD"
@@ -29,7 +29,10 @@ k = paddle.randn(shape=(bsz, seq_len, num_heads, head_dim), dtype=paddle.float16
 v = paddle.randn(shape=(bsz, seq_len, num_heads, head_dim), dtype=paddle.float16)
 
 km = paddle.mean(k, axis=1, keepdim=True)
+print(km.shape)
 km = km.squeeze(1) if tensor_layout == "NHD" else km.squeeze(2)
+
+print(km.shape)
 
 # remember do padding to v!
 v_pad_len = 128 - (seq_len % 128) if seq_len % 128 != 0 else 0

@@ -1008,7 +1008,7 @@ std::vector<paddle::Tensor> sage_attention_dsk_fwd(paddle::Tensor& q,
 
   int seq_dim = (tensor_layout == 0) ? 1 : 2;
 
-  auto km2 = k.mean(1, {}, true);
+  // auto km2 = k.mean(1, {}, true);
 
   // quant q, k -> q_int8, k_int8
   constexpr int BLKQ = 64;
