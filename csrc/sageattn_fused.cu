@@ -447,11 +447,74 @@ __global__ void TransposePadPermuteKernel(T *__restrict__ input, T *__restrict__
   __syncthreads();
 
   *(float4*)(output_ptr_base) = *(float4*)(&shared_store[thread_id / num_threads_per_cta][thread_id % num_threads_per_cta * pack_size]);
-  // for unable-align reasons, we unroll it manually.
-// #pragma unroll
-//   for (int i = 0; i < 8; i++) {
-//     *(output_ptr_base + i) = shared_store[thread_id / num_threads_per_cta][thread_id % num_threads_per_cta * pack_size + i];  // TODO: not debugged, maybe some problem
-//   }
+}
+
+template <uint32_t head_dim, uint32_t CTA_SIZE, bool pad_zero=false, typename T>
+__global__ void TransposePadPermuteVarlenKernel(T *__restrict__ input, // padded_total_seqlen x h_kv x head_dim
+                            T *__restrict__ output,   // head_dim x h_kv x padded_total_seqlen
+                            uint32_t *__restrict__ cu_seqlen,
+                            int *__restrict__ padded_seqlen,
+                            const uint32_t num_tokens,
+                            const uint32_t stride_seq_input, const uint32_t stride_h_input,
+                            const uint32_t stride_d_output, const uint32_t stride_h_output)
+{
+  static_assert(std::is_same<T, half>::value || std::is_same<T, nv_bfloat16>::value, "Only half and bfloat16 are supported");
+
+  constexpr uint32_t pack_size = 8; // float4 contains 8 half or 8 bfloat16
+  uint32_t num_threads_per_token = head_dim / pack_size;
+  uint32_t num_threads_per_cta = CTA_SIZE / pack_size;
+
+  uint32_t bx = blockIdx.x;         // max_seq_len
+  uint32_t head_id = blockIdx.y;    
+  uint32_t batch_id = blockIdx.z;   // bsz_id
+  uint32_t thread_id = threadIdx.x;
+
+  const uint32_t h_kv = blockDim.y;
+
+  uint32_t thread_base_token = bx * CTA_SIZE + thread_id / num_threads_per_token;
+  if (thread_base_token > num_tokens) return;
+
+  // recompute
+  // T *input_ptr_base = input + batch_id * stride_bz_input + head_id * stride_h_input + thread_base_token * stride_seq_input + thread_id % num_threads_per_token * pack_size;
+
+  T *input_ptr_base = input + cu_seqlen[batch_id] * stride_seq_input + head_id * stride_h_input + thread_base_token * stride_seq_input + thread_id % num_threads_per_token * pack_size;
+
+  // recompute, stride_seq_input = h_kv x head_dim
+  // T* output_ptr_base = output + batch_id * stride_bz_output + head_id * stride_h_output + bx * CTA_SIZE + thread_id % num_threads_per_cta * pack_size + thread_id / num_threads_per_cta * stride_d_output;
+
+  // TODO: This need debug, especially `stride_d_output`...
+
+  T* output_ptr_base = output + stride_seq_input * padded_seqlen[batch_id] + head_id * stride_h_output + bx * CTA_SIZE + thread_id % num_threads_per_cta * pack_size + thread_id / num_threads_per_cta * stride_d_output;
+
+  __shared__ T shared_load[CTA_SIZE][head_dim];
+  __shared__ T shared_store[head_dim][CTA_SIZE];
+
+  // 0, 1, 4, 5, 8, 9, 12, 13, 2, 3, 6, 7, 10, 11, 14, 15
+  // permute on the seq dimension for fp8 mma
+  uint32_t smem_load_row_base = ((thread_id / num_threads_per_token) / 16) * 16;
+  uint32_t smem_load_row_mod = (thread_id / num_threads_per_token) % 16;
+  uint32_t smem_load_row = smem_load_row_base + (smem_load_row_mod  / 8) * 2 + ((smem_load_row_mod / 2) % 4) * 4 + (smem_load_row_mod % 2);
+
+  constexpr cp_async::SharedMemFillMode fill_mode = pad_zero ? cp_async::SharedMemFillMode::kFillZero : cp_async::SharedMemFillMode::kNoFill;
+  cp_async::pred_load_128b<cp_async::PrefetchMode::kNoPrefetch, fill_mode>(shared_load[smem_load_row] + thread_id % num_threads_per_token * pack_size, input_ptr_base, thread_base_token < num_tokens);
+  cp_async::commit_group();
+  cp_async::wait_group<0>();
+  __syncthreads();
+
+  uint32_t smem_row_base = thread_id % CTA_SIZE;
+  uint32_t smem_col_base = thread_id / CTA_SIZE;
+  uint32_t smem_col_stride = head_dim / 8;
+
+  // TODO: use ldmatrix to do permutation
+#pragma unroll
+  for (uint32_t i = 0; i < 8; i++)
+  {
+    shared_store[smem_col_base + i * smem_col_stride][smem_row_base] = shared_load[smem_row_base][smem_col_base + i * smem_col_stride];
+  }
+
+  __syncthreads();
+
+  *(float4*)(output_ptr_base) = *(float4*)(&shared_store[thread_id / num_threads_per_cta][thread_id % num_threads_per_cta * pack_size]);
 }
 
 template<uint32_t pad_size, bool sub_mean = false, typename T>
@@ -1206,6 +1269,69 @@ void transpose_pad_permute_cuda_fwd(
   });
 }
 
+// varlen quant v
+void transpose_pad_permute_varlen_cuda_fwd(
+                paddle::Tensor& input,        // padded_total_seq_len x h_kv x head_dim
+                paddle::Tensor& output,       // head_dim x h_kv x padded_total_seq_len
+                paddle::Tenosr& cu_seqlen,
+                int *padded_seqlen,
+                int max_seq_len_v,
+                int tensor_layout)
+{
+  CHECK_CUDA(input);
+  CHECK_CUDA(output);
+
+  CHECK_LASTDIM_CONTIGUOUS(input);
+  CHECK_CONTIGUOUS(output);
+
+  CHECK_DIMS(input, 3);
+  CHECK_DIMS(output, 3);
+
+  constexpr int CTA_SIZE = 64;
+
+  const int batch_size = cu_seqlen.shape()[0] - 1;
+  const int head_dim = input.shape()[2];
+
+  int num_tokens = max_seq_len_v;
+  int num_heads = input.shape()[1];
+  int stride_seq_input = input.strides()[0];  // h_kv x head_dim
+  int stride_h_input = input.strides()[1];    // head_dim
+  int stride_d_output = output.strides()[0];  // h_kv x padded_total_seq_len
+  int stride_h_output = output.strides()[1];  // padded_total_seq_len
+
+  int padded_num_tokens = (num_tokens + CTA_SIZE - 1) / CTA_SIZE * CTA_SIZE;
+
+  auto input_dtype = input.dtype();
+  auto output_dtype = output.dtype();
+
+  int* d_padded_seqlen;
+  cudaMalloc((void**)&d_padded_seqlen, (batch_size + 1) * sizeof(int));
+  cudaMemcpy(d_padded_seqlen, padded_seqlen, (batch_size + 1) * sizeof(int), cudaMemcpyHostToDevice);
+
+  PD_CHECK(input_dtype == output_dtype, "Input and output must have the same data type");
+
+  DISPATCH_PADDLE_DTYPE_TO_CTYPE_FP16(input_dtype, c_type, {
+    DISPATCH_HEAD_DIM(head_dim, HEAD_DIM, {
+      dim3 grid(padded_num_tokens / CTA_SIZE, num_heads, batch_size);
+
+      static_assert(CTA_SIZE * HEAD_DIM <= 8192);
+
+      dim3 block(CTA_SIZE * (HEAD_DIM / 8));
+
+      TransposePadPermuteVarlenKernel<HEAD_DIM, CTA_SIZE, true, c_type><<<grid, block>>>(
+        reinterpret_cast<c_type*>(input.data()),
+        reinterpret_cast<c_type*>(output.data()),
+        reinterpret_cast<uint32_t*>(cu_seqlen.data()), d_padded_seqlen,
+        num_tokens,
+        stride_seq_input, stride_h_input,
+        stride_d_output, stride_h_output
+      );
+    });
+  });
+
+  cudaFree(d_padded_seqlen);
+}
+
 void scale_fuse_quant_cuda_fwd(
                 paddle::Tensor& input,
                 paddle::Tensor& output,
@@ -1513,9 +1639,20 @@ std::vector<paddle::Tensor> per_channel_varlen_fp8(paddle::Tensor& v, // total_s
     int kv_len = max_seq_len_v;
     int padded_len = (kv_len + 63) / 64 * 64;
 
-    paddle::Tensor v_transposed_permutted = paddle::empty({b, h_kv, head_dim, padded_len}, v.dtype(), paddle::GPUPlace());
+    int padded_total_seq_len = 0;
+    int* padded_seqlen = new int[b + 1];
+    padded_seqlen[0] = 0;
+    for (int i = 0; i < b; i++) {
+      // pad each seq_len to multiple of 64
+      int padded_len = (cu_seqlen_v[i + 1] - cu_seqlen_v[i] + 63) / 64 * 64
+      padded_total_seq_len += padded_len;
+      padded_seqlen[i + 1] = padded_total_seq_len;
+    }
     
-    transpose_pad_permute_cuda_fwd(v, v_transposed_permutted, tensor_layout);
+    paddle::Tensor v_transposed_permutted = paddle::empty({head_dim, h_kv, padded_total_seq_len}, v.dtype(), paddle::GPUPlace());
+    
+    transpose_pad_permute_varlen_cuda_fwd(v, v_transposed_permutted, cu_seqlen_v, padded_seqlen,
+                                          max_seq_len_v, tensor_layout);
 
     paddle::Tensor v_fp8 = paddle::empty(v_transposed_permutted.shape(), paddle::DataType::FLOAT8_E4M3FN, paddle::GPUPlace());
     paddle::Tensor v_scale = paddle::empty({b, h_kv, head_dim}, paddle::DataType::FLOAT32, paddle::GPUPlace());
@@ -1525,6 +1662,8 @@ std::vector<paddle::Tensor> per_channel_varlen_fp8(paddle::Tensor& v, // total_s
     } else {
         scale_fuse_quant_cuda_fwd(v_transposed_permutted, v_fp8, v_scale, kv_len, scale_max, tensor_layout);
     }
+
+    delete[] padded_seqlen;
 
     return {v_fp8, v_scale, vm};
 }
