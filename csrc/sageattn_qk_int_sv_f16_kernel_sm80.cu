@@ -692,7 +692,7 @@ __global__ void qk_int_sv_f16_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t 
   const uint32_t num_threads_per_token = head_dim / PACK_SIZE_QK;
 
   const uint32_t thread_token_base = blockIdx.x * CTA_Q + threadIdx.x / num_threads_per_token;
-  if (thread_token_base > cu_seqlen[blockIdx.z]) return;
+  if (thread_token_base > cu_seqlen[blockIdx.z + 1] - cu_seqlen[blockIdx.z]) return;
 
   constexpr uint32_t num_warps_q = CTA_Q / WARP_Q;
   constexpr uint32_t num_warps_k = CTA_K / WARP_K;
@@ -2235,7 +2235,7 @@ std::vector<paddle::Tensor> sage_attention_fwd(paddle::Tensor& q,
     }
   }
 
-  return {o};
+  return {o, quant_results[0], quant_results[2]};
 }
 
 std::vector<std::vector<int64_t>> sage_attention_InferShape(
@@ -2258,7 +2258,7 @@ std::vector<paddle::DataType> sage_attention_InferDtype(
 
 PD_BUILD_OP(sage_attention)
     .Inputs({"q", "k", "v", "km", paddle::Optional("vm")})
-    .Outputs({"o"})
+    .Outputs({"o", "q_int8", "k_int8"})
     .Attrs({"sm_scale: float",
             "qk_quant_gran: std::string",
             "pv_accum_dtype: std::string",
@@ -2330,7 +2330,7 @@ std::vector<paddle::Tensor> sage_attention_varlen_fwd(paddle::Tensor& q,  // tot
     }
   }
 
-  return {o, quant_results[0]};
+  return {o, quant_results[0], quant_results[2]};
 }
 
 std::vector<std::vector<int64_t>> sage_attention_varlen_InferShape(
@@ -2355,7 +2355,7 @@ std::vector<paddle::DataType> sage_attention_varlen_InferDtype(
 
 PD_BUILD_OP(sage_attention_varlen)
     .Inputs({"q", "k", "v", "cu_seqlen", "segment_ids", paddle::Optional("vm")})
-    .Outputs({"o", "q_int8"})
+    .Outputs({"o", "q_int8", "k_int8"})
     .Attrs({"max_seqlen_q: int",
             "max_seqlen_k: int",
             "sm_scale: float",

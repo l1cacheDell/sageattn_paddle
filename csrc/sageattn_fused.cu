@@ -216,9 +216,10 @@ __global__ void QuantInt8Kernel_Varlen(T *__restrict__ input, T *__restrict__ me
   uint32_t batch_id = blockIdx.z;
   uint32_t thread_id = threadIdx.x;
 
-  const uint32_t num_tokens = cu_seqlen[batch_id];
+  const uint32_t num_tokens = cu_seqlen[batch_id + 1] - cu_seqlen[batch_id];
 
   uint32_t thread_base_token = bx * BLOCK_SIZE + thread_id / num_threads_per_token;
+  // printf("thread_base_token: %d, num_tokens: %d\n", thread_base_token, num_tokens);
   if (thread_base_token > num_tokens) return;
 
   T *input_ptr_base = input + cu_seqlen[batch_id] * stride_seq_input + head_id * stride_h_input + thread_base_token * stride_seq_input + thread_id % num_threads_per_token * pack_size;
@@ -783,6 +784,7 @@ void quant_per_block_int8_fuse_sub_mean_varlen_cuda_fwd(
         constexpr int num_pack_per_thread = (BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024;
 
         dim3 block(BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
+        printf("mean shape: %d %d %d\n", mean.shape()[0], mean.shape()[1], mean.shape()[2]);
         QuantInt8Kernel_Varlen<HEAD_DIM, BLOCK_SIZE, num_pack_per_thread, false, true, c_type><<<grid, block>>>(
           reinterpret_cast<c_type*>(input.data()),
           reinterpret_cast<c_type*>(mean.data()),
