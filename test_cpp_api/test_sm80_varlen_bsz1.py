@@ -16,18 +16,7 @@ def precision_cmp_paddle(t1: paddle.Tensor, t2: paddle.Tensor):
     
     return sim, l1, max_diff
 
-# def create_tensor(bsz: int):
-#     tensors = []
-#     num_heads = 24
-#     head_dim = 128
 
-#     cu_seqlens = [0]
-
-#     for i in range(bsz):
-#         tensors.append(paddle.randn([i + 1, i + 1], dtype=paddle.float32))
-#     return paddle.stack(tensors)
-
-bsz = 2
 seq_len = 1025
 num_heads = 24
 head_dim = 128
@@ -65,21 +54,6 @@ o1, q_int8, k_int8, km_out = sageattn_custom_ops.sage_attention_varlen(q,
                                                 return_lse=return_lse)
 
 # =======================================================================
-# q1, q2, q3 = paddle.split(q, [seq_len], axis=0)
-# k1, k2, k3 = paddle.split(k, [seq_len], axis=0)
-# v1, v2, v3 = paddle.split(v, [seq_len], axis=0)
-
-# q1 = paddle.unsqueeze(q1, axis=0)
-# k1 = paddle.unsqueeze(k1, axis=0)
-# v1 = paddle.unsqueeze(v1, axis=0)
-
-# q2 = paddle.unsqueeze(q2, axis=0)
-# k2 = paddle.unsqueeze(k2, axis=0)
-# v2 = paddle.unsqueeze(v2, axis=0)
-
-# q3 = paddle.unsqueeze(q3, axis=0)
-# k3 = paddle.unsqueeze(k3, axis=0)
-# v3 = paddle.unsqueeze(v3, axis=0)
 
 q = q.unsqueeze(0)
 k = k.unsqueeze(0)
@@ -88,18 +62,13 @@ v = v.unsqueeze(0)
 km = paddle.mean(k, axis=1, keepdim=True)
 km = km.squeeze(1) if tensor_layout == "NHD" else km.squeeze(2)
 
-# km2 = paddle.mean(k2, axis=1, keepdim=True)
-# km2 = km2.squeeze(1) if tensor_layout == "NHD" else km2.squeeze(2)
-
-# km3 = paddle.mean(k3, axis=1, keepdim=True)
-# km3 = km3.squeeze(1) if tensor_layout == "NHD" else km3.squeeze(2)
 
 o_set_1, q_int8_1, k_int8_1 = sageattn_custom_ops.sage_attention(q, k, v, km, None, head_dim**-0.5, "per_warp", "fp32", tensor_layout=0, is_causal=is_causal, smooth_k=True, smooth_v=False, return_lse=return_lse)
 
 km_total = paddle.concat([km], axis=0)
 print("max km: ", paddle.max(km_out - km_total))
 
-o_set_1 = paddle.nn.functional.scaled_dot_product_attention(q, k, v, None, 0.0, True, False)
+# o_set_1 = paddle.nn.functional.scaled_dot_product_attention(q, k, v, None, 0.0, True, False)
 # o_set_2 = paddle.nn.functional.scaled_dot_product_attention(q2, k2, v2, None, 0.0, True, False)
 # o_set_3 = paddle.nn.functional.scaled_dot_product_attention(q3, k3, v3, None, 0.0, True, False)
 
@@ -107,17 +76,13 @@ o2 = o_set_1.squeeze(0)
 
 print(o2.shape)
 print(o1.shape)
-# print(o1)
-# print(q_int8)
 
 # compare quant results
 q_int8_varlen_1 = q_int8
 sim_q_int8_1, _, max_diff_q_int8_1 = precision_cmp_paddle(q_int8_1.squeeze(0), q_int8_varlen_1)
-# sim_q_int8_2, _, max_diff_q_int8_2 = precision_cmp_paddle(q_int8_2.squeeze(0), q_int8_varlen_2)
-# sim_q_int8_3, _, max_diff_q_int8_3 = precision_cmp_paddle(q_int8_3.squeeze(0), q_int8_varlen_3)
+
 print(f"sim_q_int8_1: {sim_q_int8_1}, max_diff_q_int8_1: {max_diff_q_int8_1}")
-# print(f"sim_q_int8_2: {sim_q_int8_2}, max_diff_q_int8_2: {max_diff_q_int8_2}")
-# print(f"sim_q_int8_3: {sim_q_int8_3}, max_diff_q_int8_3: {max_diff_q_int8_3}")
+
 
 
 k_int8_varlen_1 = k_int8
@@ -125,17 +90,14 @@ sim_k_int8_1, _, max_diff_k_int8_1 = precision_cmp_paddle(k_int8_1.squeeze(0), k
 
 print(f"sim_k_int8_1: {sim_k_int8_1}, max_diff_k_int8_1: {max_diff_k_int8_1}")
 
-# print(k_int8_1.squeeze(0).place, k_int8_varlen_1.place)
+
 diff_mat = k_int8_1.squeeze(0).astype("int32") - k_int8_varlen_1.astype(paddle.int32)
-# idx = paddle.argmax(diff_mat).item()
-# print(f"The seq: {idx // (head_dim * num_heads)} The Head: {(idx % (head_dim * num_heads)) // head_dim}, The dim: {idx % head_dim}")
+
 non_zero_indices = paddle.nonzero(diff_mat != 0)  # 形状为 [N, rank]，N 是非零元素数量
 print(non_zero_indices.shape)
-# np.savetxt("mat1.txt", non_zero_indices.cpu().numpy(), fmt='%.1f')
-# np.savetxt("mat1_val.txt", diff_mat[non_zero_indices].reshape([-1,]).cpu().numpy(), fmt='%.1f')
 
 
 sim, l1, max_diff = precision_cmp_paddle(o1, o2)
 print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}")
 
-print(o1)
+# print(o1)
