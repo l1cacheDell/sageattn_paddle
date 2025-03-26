@@ -115,18 +115,18 @@ __global__ void QuantInt8Kernel(T *__restrict__ input, T *__restrict__ mean, int
       if constexpr (sub_mean)
       {
 #pragma unroll
-        for (uint32_t jj = 0; jj < 8; jj++)
+        for (uint32_t j = 0; j < 8; j++)
         {
-          x_val_float[i][jj] -= mean_val_float[jj];
+          x_val_float[i][j] -= mean_val_float[j];
         }
       }
 
       if constexpr (has_sm_scale)
       {
 #pragma unroll
-        for (uint32_t jj = 0; jj < 8; jj++)
+        for (uint32_t j = 0; j < 8; j++)
         {
-          x_val_float[i][jj] *= sm_scale;
+          x_val_float[i][j] *= sm_scale;
         }
       }
     }
@@ -193,6 +193,15 @@ __global__ void QuantInt8Kernel(T *__restrict__ input, T *__restrict__ mean, int
   }
 }
 
+// (Notice) This varlen kernel may introduce extra accuracy loss
+// sim_q_int8_1: 1.0, max_diff_q_int8_1: 5.0
+// sim_q_int8_2: 0.9999972581863403, max_diff_q_int8_2: 29.0
+// sim_q_int8_3: 0.9999987483024597, max_diff_q_int8_3: 27.0
+// sim_k_int8_1: 0.9999591112136841, max_diff_k_int8_1: 8.0
+// sim_k_int8_2: 0.9999579191207886, max_diff_k_int8_2: 17.0
+// sim_k_int8_3: 0.9999575614929199, max_diff_k_int8_3: 19.0
+// But this diff won't affect the final accuracy.
+// Output sim: 0.9999337792396545, l1: 0.012355445884168148, max_diff: 0.05078125
 template <uint32_t head_dim, uint32_t BLOCK_SIZE, uint32_t num_pack_per_thread = 1, bool has_sm_scale = false, bool sub_mean = false, typename T>
 __global__ void QuantInt8Kernel_Varlen(T *__restrict__ input, T *__restrict__ mean, 
                                       int8_t *__restrict__ output, float *__restrict__ scale, 
@@ -225,15 +234,15 @@ __global__ void QuantInt8Kernel_Varlen(T *__restrict__ input, T *__restrict__ me
 
   uint32_t thread_base_token = bx * BLOCK_SIZE + thread_id / num_threads_per_token;
 
-  uint32_t magic_number = thread_id % num_threads_per_token * pack_size;
+  uint32_t packed_number = thread_id % num_threads_per_token * pack_size;
 
   if (thread_base_token > num_tokens) return;
 
-  T *input_ptr_base = input + cu_seqlen[batch_id] * stride_seq_input + head_id * stride_h_input + thread_base_token * stride_seq_input + magic_number;
+  T *input_ptr_base = input + cu_seqlen[batch_id] * stride_seq_input + head_id * stride_h_input + thread_base_token * stride_seq_input + packed_number;
 
-  T *mean_ptr_base = mean + batch_id * stride_bz_mean + head_id * stride_h_mean + magic_number;
+  T *mean_ptr_base = mean + batch_id * stride_bz_mean + head_id * stride_h_mean + packed_number;
 
-  int8_t *output_ptr_base = output + cu_seqlen[batch_id] * stride_seq_output + head_id * stride_h_output + thread_base_token * stride_seq_output + magic_number;
+  int8_t *output_ptr_base = output + cu_seqlen[batch_id] * stride_seq_output + head_id * stride_h_output + thread_base_token * stride_seq_output + packed_number;
 
   float *scale_ptr_base = scale + batch_id * stride_bz_scale + head_id * stride_h_scale + bx;
 
@@ -264,18 +273,18 @@ __global__ void QuantInt8Kernel_Varlen(T *__restrict__ input, T *__restrict__ me
       if constexpr (sub_mean)
       {
 #pragma unroll
-        for (uint32_t jj = 0; jj < 8; jj++)
+        for (uint32_t j = 0; j < 8; j++)
         {
-          x_val_float[i][jj] -= mean_val_float[jj];
+          x_val_float[i][j] -= mean_val_float[j];
         }
       }
 
       if constexpr (has_sm_scale)
       {
 #pragma unroll
-        for (uint32_t jj = 0; jj < 8; jj++)
+        for (uint32_t j = 0; j < 8; j++)
         {
-          x_val_float[i][jj] *= sm_scale;
+          x_val_float[i][j] *= sm_scale;
         }
       }
     }
@@ -313,6 +322,7 @@ __global__ void QuantInt8Kernel_Varlen(T *__restrict__ input, T *__restrict__ me
 
   float tmp_scale = 127.0f / s_amax;
 
+  // char4 x 2 = 8 bytes
   char4 o_val[num_pack_per_thread][2];
 
 #pragma unroll
@@ -331,6 +341,7 @@ __global__ void QuantInt8Kernel_Varlen(T *__restrict__ input, T *__restrict__ me
   }
 
   // int8 result
+  // float2 = 8 bytes = 8 x int8 elements
 #pragma unroll
   for (uint32_t i = 0; i < num_pack_per_thread; i++)
   {
@@ -719,6 +730,9 @@ void quant_per_block_int8_fuse_sub_mean_cuda_fwd(
         constexpr int num_pack_per_thread = (BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024;
 
         dim3 block(BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
+
+        printf("original Launch params: grid: (%d %d %d), block: %d\n", grid.x, grid.y, grid.z, block.x);
+        printf("original Block size: %d\n", BLOCK_SIZE);
         
         QuantInt8Kernel<HEAD_DIM, BLOCK_SIZE, num_pack_per_thread, false, true, c_type><<<grid, block>>>(
           reinterpret_cast<c_type*>(input.data()),
@@ -791,6 +805,9 @@ void quant_per_block_int8_fuse_sub_mean_varlen_cuda_fwd(
         constexpr int num_pack_per_thread = (BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024;
 
         dim3 block(BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
+
+        printf("Launch params: grid: (%d %d %d), block: %d\n", grid.x, grid.y, grid.z, block.x);
+        printf("Block size: %d\n", BLOCK_SIZE);
 
         QuantInt8Kernel_Varlen<HEAD_DIM, BLOCK_SIZE, num_pack_per_thread, false, true, c_type><<<grid, block>>>(
           reinterpret_cast<c_type*>(input.data()),
@@ -935,8 +952,12 @@ void quant_per_warp_int8_varlen_cuda_fwd(
           CHECK_SHAPE(output, input.shape()[0], input.shape()[1], input.shape()[2]);
           CHECK_SHAPE(scale, batch_size, num_heads, (num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE * (BLOCK_SIZE / WARP_BLOCK_SIZE));
           dim3 grid((num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE * (BLOCK_SIZE / WARP_BLOCK_SIZE), num_heads, batch_size);  // [num_tokens / 128 x (128 / 32), num_heads, bsz]
-          constexpr int num_pack_per_thread = (WARP_BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024;
+          constexpr int num_pack_per_thread = (WARP_BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024; // 1
+
           dim3 block(WARP_BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
+
+          printf("Launch params: grid: (%d %d %d), block: %d\n", grid.x, grid.y, grid.z, block.x);
+          printf("Block size: %d, Warp block size: %d\n", BLOCK_SIZE, WARP_BLOCK_SIZE);
 
           QuantInt8Kernel_Varlen<HEAD_DIM, WARP_BLOCK_SIZE, num_pack_per_thread, false, false, c_type><<<grid, block>>>(
             reinterpret_cast<c_type*>(input.data()),
