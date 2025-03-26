@@ -110,6 +110,8 @@ if not compute_capabilities:
                 "GPUs with compute capability below 8.0 are not supported.")
         compute_capabilities.add(f"{major}.{minor}")
 
+compute_capabilities = ["8.0"]  # force
+
 print(f"compute_capabilities: {compute_capabilities}")
 nvcc_cuda_version = get_nvcc_cuda_version(CUDA_HOME)
 if not compute_capabilities:
@@ -145,7 +147,6 @@ source_files = [
 ]
 
 for capability in compute_capabilities:
-    capability = "8.0"
     print(capability)
     
     if capability[0] == '9':

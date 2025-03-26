@@ -79,9 +79,13 @@ __global__ void QuantInt8Kernel(T *__restrict__ input, T *__restrict__ mean, int
   uint32_t thread_id = threadIdx.x;
 
   uint32_t thread_base_token = bx * BLOCK_SIZE + thread_id / num_threads_per_token;
+
   T *input_ptr_base = input + batch_id * stride_bz_input + head_id * stride_h_input + thread_base_token * stride_seq_input + thread_id % num_threads_per_token * pack_size;
+
   T *mean_ptr_base = mean + batch_id * stride_bz_mean + head_id * stride_h_mean + thread_id % num_threads_per_token * pack_size;
+
   int8_t *output_ptr_base = output + batch_id * stride_bz_output + head_id * stride_h_output + thread_base_token * stride_seq_output + thread_id % num_threads_per_token * pack_size;
+
   float *scale_ptr_base = scale + batch_id * stride_bz_scale + head_id * stride_h_scale + bx;
 
   if constexpr (sub_mean)
@@ -111,18 +115,18 @@ __global__ void QuantInt8Kernel(T *__restrict__ input, T *__restrict__ mean, int
       if constexpr (sub_mean)
       {
 #pragma unroll
-        for (uint32_t j = 0; j < 8; j++)
+        for (uint32_t jj = 0; jj < 8; jj++)
         {
-          x_val_float[i][j] -= mean_val_float[j];
+          x_val_float[i][jj] -= mean_val_float[jj];
         }
       }
 
       if constexpr (has_sm_scale)
       {
 #pragma unroll
-        for (uint32_t j = 0; j < 8; j++)
+        for (uint32_t jj = 0; jj < 8; jj++)
         {
-          x_val_float[i][j] *= sm_scale;
+          x_val_float[i][jj] *= sm_scale;
         }
       }
     }
@@ -190,13 +194,14 @@ __global__ void QuantInt8Kernel(T *__restrict__ input, T *__restrict__ mean, int
 }
 
 template <uint32_t head_dim, uint32_t BLOCK_SIZE, uint32_t num_pack_per_thread = 1, bool has_sm_scale = false, bool sub_mean = false, typename T>
-__global__ void QuantInt8Kernel_Varlen(T *__restrict__ input, T *__restrict__ mean, int8_t *__restrict__ output, float *__restrict__ scale, 
-                            uint32_t *__restrict__ cu_seqlen,
-                            float sm_scale,
-                            const uint32_t stride_seq_input, const uint32_t stride_h_input,
-                            const uint32_t stride_bz_mean, const uint32_t stride_h_mean,
-                            const uint32_t stride_seq_output, const uint32_t stride_h_output,
-                            const uint32_t stride_bz_scale, const uint32_t stride_h_scale)
+__global__ void QuantInt8Kernel_Varlen(T *__restrict__ input, T *__restrict__ mean, 
+                                      int8_t *__restrict__ output, float *__restrict__ scale, 
+                                      uint32_t *__restrict__ cu_seqlen,
+                                      float sm_scale,
+                                      const uint32_t stride_seq_input, const uint32_t stride_h_input,
+                                      const uint32_t stride_bz_mean, const uint32_t stride_h_mean,
+                                      const uint32_t stride_seq_output, const uint32_t stride_h_output,
+                                      const uint32_t stride_bz_scale, const uint32_t stride_h_scale)
 {
   static_assert(std::is_same<T, half>::value || std::is_same<T, nv_bfloat16>::value, "Only half and bfloat16 are supported");
   static_assert(num_pack_per_thread > 0, "The number of pack per thread must be greater than 0");
@@ -206,9 +211,9 @@ __global__ void QuantInt8Kernel_Varlen(T *__restrict__ input, T *__restrict__ me
 
   static_assert(num_threads_per_token <= 32, "The number of threads per token must be less than or equal to warp size");
 
-  T x_val[num_pack_per_thread][8];
+  T x_val[num_pack_per_thread][8]; // [1][8]
   T mean_val[8];
-  float x_val_float[num_pack_per_thread][8];
+  float x_val_float[num_pack_per_thread][8];   // [1][8]
   float mean_val_float[8];
 
   uint32_t bx = blockIdx.x;
@@ -219,14 +224,16 @@ __global__ void QuantInt8Kernel_Varlen(T *__restrict__ input, T *__restrict__ me
   const uint32_t num_tokens = cu_seqlen[batch_id + 1] - cu_seqlen[batch_id];
 
   uint32_t thread_base_token = bx * BLOCK_SIZE + thread_id / num_threads_per_token;
-  // printf("thread_base_token: %d, num_tokens: %d\n", thread_base_token, num_tokens);
+
+  uint32_t magic_number = thread_id % num_threads_per_token * pack_size;
+
   if (thread_base_token > num_tokens) return;
 
-  T *input_ptr_base = input + cu_seqlen[batch_id] * stride_seq_input + head_id * stride_h_input + thread_base_token * stride_seq_input + thread_id % num_threads_per_token * pack_size;
+  T *input_ptr_base = input + cu_seqlen[batch_id] * stride_seq_input + head_id * stride_h_input + thread_base_token * stride_seq_input + magic_number;
 
-  T *mean_ptr_base = mean + batch_id * stride_bz_mean + head_id * stride_h_mean + thread_id % num_threads_per_token * pack_size;
+  T *mean_ptr_base = mean + batch_id * stride_bz_mean + head_id * stride_h_mean + magic_number;
 
-  int8_t *output_ptr_base = output + cu_seqlen[batch_id] * stride_seq_output + head_id * stride_h_output + thread_base_token * stride_seq_output + thread_id % num_threads_per_token * pack_size;
+  int8_t *output_ptr_base = output + cu_seqlen[batch_id] * stride_seq_output + head_id * stride_h_output + thread_base_token * stride_seq_output + magic_number;
 
   float *scale_ptr_base = scale + batch_id * stride_bz_scale + head_id * stride_h_scale + bx;
 
@@ -240,7 +247,7 @@ __global__ void QuantInt8Kernel_Varlen(T *__restrict__ input, T *__restrict__ me
     }
   }
 
-  constexpr uint32_t iter_stride = BLOCK_SIZE / num_pack_per_thread;
+  constexpr uint32_t iter_stride = BLOCK_SIZE / num_pack_per_thread; // 64 / 1 = 64
 
   // load the data
   for (uint32_t i = 0; i < num_pack_per_thread; i++)
@@ -257,18 +264,18 @@ __global__ void QuantInt8Kernel_Varlen(T *__restrict__ input, T *__restrict__ me
       if constexpr (sub_mean)
       {
 #pragma unroll
-        for (uint32_t j = 0; j < 8; j++)
+        for (uint32_t jj = 0; jj < 8; jj++)
         {
-          x_val_float[i][j] -= mean_val_float[j];
+          x_val_float[i][jj] -= mean_val_float[jj];
         }
       }
 
       if constexpr (has_sm_scale)
       {
 #pragma unroll
-        for (uint32_t j = 0; j < 8; j++)
+        for (uint32_t jj = 0; jj < 8; jj++)
         {
-          x_val_float[i][j] *= sm_scale;
+          x_val_float[i][jj] *= sm_scale;
         }
       }
     }
@@ -327,7 +334,6 @@ __global__ void QuantInt8Kernel_Varlen(T *__restrict__ input, T *__restrict__ me
 #pragma unroll
   for (uint32_t i = 0; i < num_pack_per_thread; i++)
   {
-    
     if (thread_base_token + i * iter_stride < num_tokens)
     {
       *reinterpret_cast<float2*>(output_ptr_base + i * iter_stride * stride_seq_output) = *reinterpret_cast<float2*>(&o_val[i][0]);
@@ -713,6 +719,7 @@ void quant_per_block_int8_fuse_sub_mean_cuda_fwd(
         constexpr int num_pack_per_thread = (BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024;
 
         dim3 block(BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
+        
         QuantInt8Kernel<HEAD_DIM, BLOCK_SIZE, num_pack_per_thread, false, true, c_type><<<grid, block>>>(
           reinterpret_cast<c_type*>(input.data()),
           reinterpret_cast<c_type*>(mean.data()),
@@ -737,7 +744,7 @@ void quant_per_block_int8_fuse_sub_mean_varlen_cuda_fwd(
                 paddle::Tensor& scale,  // bsz x num_heads x (total_seq_len + BLOCK_SIZE - 1) / BLOCK_SIZE
                 paddle::Tensor& cu_seqlen,
                 int max_seq_len_q,
-                int block_size)
+                int block_size)  // BLKK: 64
 {
   CHECK_CUDA(input);
   CHECK_CUDA(mean);
@@ -784,7 +791,7 @@ void quant_per_block_int8_fuse_sub_mean_varlen_cuda_fwd(
         constexpr int num_pack_per_thread = (BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024;
 
         dim3 block(BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
-        printf("mean shape: %d %d %d\n", mean.shape()[0], mean.shape()[1], mean.shape()[2]);
+
         QuantInt8Kernel_Varlen<HEAD_DIM, BLOCK_SIZE, num_pack_per_thread, false, true, c_type><<<grid, block>>>(
           reinterpret_cast<c_type*>(input.data()),
           reinterpret_cast<c_type*>(mean.data()),
@@ -890,8 +897,8 @@ void quant_per_warp_int8_varlen_cuda_fwd(
                 paddle::Tensor& scale,  // bsz x num_head x max_seq_len
                 paddle::Tensor& cu_seqlen_q,
                 int max_seq_len_q,
-                int block_size,
-                int warp_block_size)
+                int block_size,     // BLKQ: 128
+                int warp_block_size) // WARPQ: 32
 {
   CHECK_CUDA(input);
   CHECK_CUDA(output);
@@ -927,7 +934,7 @@ void quant_per_warp_int8_varlen_cuda_fwd(
         DISPATCH_HEAD_DIM_QK(head_dim, HEAD_DIM, {
           CHECK_SHAPE(output, input.shape()[0], input.shape()[1], input.shape()[2]);
           CHECK_SHAPE(scale, batch_size, num_heads, (num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE * (BLOCK_SIZE / WARP_BLOCK_SIZE));
-          dim3 grid((num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE * (BLOCK_SIZE / WARP_BLOCK_SIZE), num_heads, batch_size);
+          dim3 grid((num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE * (BLOCK_SIZE / WARP_BLOCK_SIZE), num_heads, batch_size);  // [num_tokens / 128 x (128 / 32), num_heads, bsz]
           constexpr int num_pack_per_thread = (WARP_BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024;
           dim3 block(WARP_BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
 
@@ -1576,9 +1583,9 @@ std::vector<paddle::Tensor> per_warp_int8_varlen_cuda_fwd(paddle::Tensor& q,  //
     // quant k -> k_int8
     quant_per_block_int8_fuse_sub_mean_varlen_cuda_fwd(k, km, k_int8, k_scale, 
                                                         cu_seqlen_q,
-                                                        max_seq_len_q, BLKK);
+                                                        max_seq_len_k, BLKK);
 
-    return {q_int8, q_scale, k_int8, k_scale};
+    return {q_int8, q_scale, k_int8, k_scale, km};
 }
 
 // register this func

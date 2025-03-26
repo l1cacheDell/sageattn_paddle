@@ -2330,7 +2330,7 @@ std::vector<paddle::Tensor> sage_attention_varlen_fwd(paddle::Tensor& q,  // tot
     }
   }
 
-  return {o, quant_results[0], quant_results[2]};
+  return {o, quant_results[0], quant_results[2], quant_results[4]};
 }
 
 std::vector<std::vector<int64_t>> sage_attention_varlen_InferShape(
@@ -2355,7 +2355,7 @@ std::vector<paddle::DataType> sage_attention_varlen_InferDtype(
 
 PD_BUILD_OP(sage_attention_varlen)
     .Inputs({"q", "k", "v", "cu_seqlen", "segment_ids", paddle::Optional("vm")})
-    .Outputs({"o", "q_int8", "k_int8"})
+    .Outputs({"o", "q_int8", "k_int8", "km"})
     .Attrs({"max_seqlen_q: int",
             "max_seqlen_k: int",
             "sm_scale: float",
