@@ -691,9 +691,6 @@ __global__ void qk_int_sv_f16_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t 
 
   const uint32_t num_threads_per_token = head_dim / PACK_SIZE_QK;
 
-  const uint32_t thread_token_base = blockIdx.x * CTA_Q + threadIdx.x / num_threads_per_token;
-  if (blockIdx.x * CTA_Q >= cu_seqlen[blockIdx.z + 1] - cu_seqlen[blockIdx.z]) return;
-
   constexpr uint32_t num_warps_q = CTA_Q / WARP_Q;
   constexpr uint32_t num_warps_k = CTA_K / WARP_K;
   constexpr uint32_t num_warps = num_warps_q * num_warps_k;
@@ -716,6 +713,9 @@ __global__ void qk_int_sv_f16_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t 
   const uint32_t bx = blockIdx.x;
   const uint32_t num_qo_heads = gridDim.y;
   const uint32_t head_id = blockIdx.y;
+
+  // varlen sequence length check, allow the rest threads in the same block to compute.
+  if (bx * CTA_Q >= cu_seqlen[blockIdx.z + 1] - cu_seqlen[blockIdx.z]) return;
 
   // transfer to base 2 instead of base e with better numerical efficiency
   sm_scale *= math::log2e;
@@ -824,6 +824,7 @@ __global__ void qk_int_sv_f16_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t 
   constexpr uint32_t O_smem_iters_row = O_SMEM_STRIDE / (global_to_shared_line_lanes_O * PACK_SIZE_O);
   constexpr uint32_t O_smem_iters_col = CTA_Q / (num_warps * global_to_shared_copy_lines_per_warp_O);
 
+  // compute index
   int8_t *Q_lane_base_ptr = Q + cu_seqlen[batch_id] * stride_seq_q + head_id * stride_h_q + (bx * CTA_Q + CTA_Q / num_warps * warp_id + lane_id / global_to_shared_line_lanes_QK) * stride_seq_q + (lane_id % global_to_shared_line_lanes_QK) * PACK_SIZE_QK;
 
   int8_t *K_lane_base_ptr = K + cu_seqlen[batch_id] * stride_seq_k + (head_id / num_kv_groups) * stride_h_k + (CTA_K / num_warps * warp_id + lane_id / global_to_shared_line_lanes_QK) * stride_seq_k + (lane_id % global_to_shared_line_lanes_QK) * PACK_SIZE_QK;
@@ -1263,10 +1264,12 @@ __global__ void qk_int_sv_f16_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t 
   __syncwarp();
 
   // shared memory to global memory
+  // Output index
   DTypeOut *O_lane_ptr = O + cu_seqlen[batch_id] * stride_seq_o + head_id * stride_h_o + (bx * CTA_Q + WARP_Q * get_warp_idx_q<num_warps_q, num_warps_k>() + lane_id / global_to_shared_line_lanes_O) * stride_seq_o + lane_id % global_to_shared_line_lanes_O * PACK_SIZE_O;
   uint32_t offset_O = smem_O.get_permuted_offset(get_warp_idx_q<num_warps_q, num_warps_k>() * WARP_Q + lane_id / global_to_shared_line_lanes_O, lane_id % global_to_shared_line_lanes_O);
   uint32_t O_load_idx_lane_base = bx * CTA_Q + CTA_Q / num_warps * warp_id + lane_id / global_to_shared_line_lanes_O;
 
+  // what about do a if-expression here to check the output write - index
 #pragma unroll
   for (uint32_t i = 0; i < O_smem_iters_col; i++)
   {
@@ -1449,8 +1452,11 @@ std::vector<paddle::Tensor>  qk_int8_sv_f16_accum_f32_attn_fwd(paddle::Tensor& q
 
             cudaFuncSetAttribute(kernel_func, cudaFuncAttributeMaxDynamicSharedMemorySize, smem_max);
 
+            //                         128
             dim3 grid(div_ceil(qo_len, CTA_Q), num_qo_heads, batch_size);
             dim3 block(32, (CTA_Q / WARP_Q) * (CTA_K / WARP_K));
+
+            printf("original Launch params: grid: (%d %d %d), block: %d %d\n", grid.x, grid.y, grid.z, block.x, block.y);
 
             kernel_func<<<grid, block, smem_max>>>(
               query.data<int8_t>(), 
@@ -1601,6 +1607,8 @@ std::vector<paddle::Tensor>  qk_int8_sv_f16_accum_f32_attn_varlen_fwd(paddle::Te
 
             dim3 grid(div_ceil(qo_len, CTA_Q), num_qo_heads, batch_size);
             dim3 block(32, (CTA_Q / WARP_Q) * (CTA_K / WARP_K));
+
+            printf("varlen Launch params: grid: (%d %d %d), block: %d %d\n", grid.x, grid.y, grid.z, block.x, block.y);
 
             kernel_func<<<grid, block, smem_max>>>(
               query.data<int8_t>(), 

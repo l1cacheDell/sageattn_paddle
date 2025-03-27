@@ -730,9 +730,6 @@ void quant_per_block_int8_fuse_sub_mean_cuda_fwd(
         constexpr int num_pack_per_thread = (BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024;
 
         dim3 block(BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
-
-        printf("original Launch params: grid: (%d %d %d), block: %d\n", grid.x, grid.y, grid.z, block.x);
-        printf("original Block size: %d\n", BLOCK_SIZE);
         
         QuantInt8Kernel<HEAD_DIM, BLOCK_SIZE, num_pack_per_thread, false, true, c_type><<<grid, block>>>(
           reinterpret_cast<c_type*>(input.data()),
@@ -805,9 +802,6 @@ void quant_per_block_int8_fuse_sub_mean_varlen_cuda_fwd(
         constexpr int num_pack_per_thread = (BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024;
 
         dim3 block(BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
-
-        printf("Launch params: grid: (%d %d %d), block: %d\n", grid.x, grid.y, grid.z, block.x);
-        printf("Block size: %d\n", BLOCK_SIZE);
 
         QuantInt8Kernel_Varlen<HEAD_DIM, BLOCK_SIZE, num_pack_per_thread, false, true, c_type><<<grid, block>>>(
           reinterpret_cast<c_type*>(input.data()),

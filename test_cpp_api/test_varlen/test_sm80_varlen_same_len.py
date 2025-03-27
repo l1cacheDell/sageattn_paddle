@@ -28,7 +28,7 @@ def precision_cmp_paddle(t1: paddle.Tensor, t2: paddle.Tensor):
 #     return paddle.stack(tensors)
 
 bsz = 3
-same_len = 24568
+same_len = 6555
 seq_len = same_len * 3
 num_heads = 24
 head_dim = 128
@@ -134,21 +134,21 @@ idx = paddle.argmax(diff_mat).item()
 print(f"The seq: {idx // (head_dim * num_heads)} The Head: {(idx % (head_dim * num_heads)) // head_dim}, The dim: {idx % head_dim}")
 non_zero_indices = paddle.nonzero(diff_mat != 0)  # 形状为 [N, rank]，N 是非零元素数量
 print(non_zero_indices.shape)
-np.savetxt("mat1.txt", non_zero_indices.cpu().numpy(), fmt='%.1f')
+# np.savetxt("mat1.txt", non_zero_indices.cpu().numpy(), fmt='%.1f')
 
 diff_mat2 = k_int8_2.squeeze(0).astype("int32") - k_int8_varlen_2.astype(paddle.int32)
 idx = paddle.argmax(diff_mat2).item()
 print(f"The seq: {idx // (head_dim * num_heads)} The Head: {(idx % (head_dim * num_heads)) // head_dim}, The dim: {idx % head_dim}")
 non_zero_indices = paddle.nonzero(diff_mat2 != 0)  # 形状为 [N, rank]，N 是非零元素数量
 print(non_zero_indices.shape)
-np.savetxt("mat2.txt", non_zero_indices.cpu().numpy(), fmt='%.1f')
+# np.savetxt("mat2.txt", non_zero_indices.cpu().numpy(), fmt='%.1f')
 
 diff_mat3 = k_int8_3.squeeze(0).astype("int32") - k_int8_varlen_3.astype(paddle.int32)
 idx = paddle.argmax(diff_mat3).item()
 print(f"The seq: {idx // (head_dim * num_heads)} The Head: {(idx % (head_dim * num_heads)) // head_dim}, The dim: {idx % head_dim}")
 non_zero_indices = paddle.nonzero(diff_mat3 != 0)  # 形状为 [N, rank]，N 是非零元素数量
 print(non_zero_indices.shape)
-np.savetxt("mat3.txt", non_zero_indices.cpu().numpy(), fmt='%.1f')
+# np.savetxt("mat3.txt", non_zero_indices.cpu().numpy(), fmt='%.1f')
 # print(k_int8_1.squeeze(0).astype("int32") - k_int8_varlen_1.astype(paddle.int32))
 
 # o2 = paddle.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=is_causal)
@@ -157,3 +157,14 @@ sim, l1, max_diff = precision_cmp_paddle(o1, o2)
 print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}")
 
 # print(o1)
+print("\n=========================================================\n")
+
+o1_seg_1, o1_seg_2, o1_seg_3 = paddle.split(o1, [same_len, same_len, same_len], axis=0)
+sim, l1, mdiff = precision_cmp_paddle(o1_seg_1.unsqueeze(0), o_set_1)
+print(f"seg_1 sim: {sim}, l1: {l1}, max_diff: {mdiff}")
+
+sim, l1, mdiff = precision_cmp_paddle(o1_seg_2.unsqueeze(0), o_set_2)
+print(f"seg_2 sim: {sim}, l1: {l1}, max_diff: {mdiff}")
+
+sim, l1, mdiff = precision_cmp_paddle(o1_seg_3.unsqueeze(0), o_set_3)
+print(f"seg_3 sim: {sim}, l1: {l1}, max_diff: {mdiff}")

@@ -97,9 +97,9 @@ o_set_3, q_int8_3, k_int8_3 = sageattn_custom_ops.sage_attention(q3, k3, v3, km3
 km_total = paddle.concat([km1, km2, km3], axis=0)
 print("max km: ", paddle.max(km_out - km_total))
 
-o_set_1 = paddle.nn.functional.scaled_dot_product_attention(q1, k1, v1, None, 0.0, True, False)
-o_set_2 = paddle.nn.functional.scaled_dot_product_attention(q2, k2, v2, None, 0.0, True, False)
-o_set_3 = paddle.nn.functional.scaled_dot_product_attention(q3, k3, v3, None, 0.0, True, False)
+# o_set_1 = paddle.nn.functional.scaled_dot_product_attention(q1, k1, v1, None, 0.0, True, False)
+# o_set_2 = paddle.nn.functional.scaled_dot_product_attention(q2, k2, v2, None, 0.0, True, False)
+# o_set_3 = paddle.nn.functional.scaled_dot_product_attention(q3, k3, v3, None, 0.0, True, False)
 
 o2 = paddle.concat([o_set_1, o_set_2, o_set_3], axis=1).squeeze(0)
 
@@ -155,3 +155,16 @@ print(non_zero_indices.shape)
 
 sim, l1, max_diff = precision_cmp_paddle(o1, o2)
 print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}")
+
+print("\n=========================================================\n")
+
+# compare three segment each
+o1_seg_1, o1_seg_2, o1_seg_3 = paddle.split(o1, [246 - 0, 394 - 246, seq_len - 394], axis=0)
+sim, l1, mdiff = precision_cmp_paddle(o1_seg_1.unsqueeze(0), o_set_1)
+print(f"seg_1 sim: {sim}, l1: {l1}, max_diff: {mdiff}")
+
+sim, l1, mdiff = precision_cmp_paddle(o1_seg_2.unsqueeze(0), o_set_2)
+print(f"seg_2 sim: {sim}, l1: {l1}, max_diff: {mdiff}")
+
+sim, l1, mdiff = precision_cmp_paddle(o1_seg_3.unsqueeze(0), o_set_3)
+print(f"seg_3 sim: {sim}, l1: {l1}, max_diff: {mdiff}")
