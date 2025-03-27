@@ -110,6 +110,8 @@ if not compute_capabilities:
                 "GPUs with compute capability below 8.0 are not supported.")
         compute_capabilities.add(f"{major}.{minor}")
 
+compute_capabilities = ["8.0"]  # force
+
 print(f"compute_capabilities: {compute_capabilities}")
 nvcc_cuda_version = get_nvcc_cuda_version(CUDA_HOME)
 if not compute_capabilities:
@@ -146,6 +148,7 @@ source_files = [
 
 for capability in compute_capabilities:
     print(capability)
+    
     if capability[0] == '9':
         source_files += [
             'csrc/sageattn_qk_int_sv_f8_kernel_sm90.cu',
@@ -153,7 +156,7 @@ for capability in compute_capabilities:
         ]
     elif capability[0] == "8" and capability[2] == "0":
         source_files += [
-            'csrc/sageattn_qk_int_sv_f8_kernel_sm80.cu',
+            'csrc/sageattn_qk_int_sv_f16_kernel_sm80.cu',
         ]
     elif capability[0] == "8" and capability[2] == "9":
         source_files += [
