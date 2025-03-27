@@ -692,7 +692,7 @@ __global__ void qk_int_sv_f16_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t 
   const uint32_t num_threads_per_token = head_dim / PACK_SIZE_QK;
 
   const uint32_t thread_token_base = blockIdx.x * CTA_Q + threadIdx.x / num_threads_per_token;
-  if (thread_token_base > cu_seqlen[blockIdx.z + 1] - cu_seqlen[blockIdx.z]) return;
+  if (blockIdx.x * CTA_Q >= cu_seqlen[blockIdx.z + 1] - cu_seqlen[blockIdx.z]) return;
 
   constexpr uint32_t num_warps_q = CTA_Q / WARP_Q;
   constexpr uint32_t num_warps_k = CTA_K / WARP_K;

@@ -236,7 +236,7 @@ __global__ void QuantInt8Kernel_Varlen(T *__restrict__ input, T *__restrict__ me
 
   uint32_t packed_number = thread_id % num_threads_per_token * pack_size;
 
-  if (thread_base_token > num_tokens) return;
+  if (bx * BLOCK_SIZE >= num_tokens) return; // let this block finish computing, even if abuntant threads are launched. Because there is a `block Reduce` func in the kernel.
 
   T *input_ptr_base = input + cu_seqlen[batch_id] * stride_seq_input + head_id * stride_h_input + thread_base_token * stride_seq_input + packed_number;
 
