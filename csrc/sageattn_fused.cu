@@ -950,8 +950,8 @@ void quant_per_warp_int8_varlen_cuda_fwd(
 
           dim3 block(WARP_BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
 
-          printf("Launch params: grid: (%d %d %d), block: %d\n", grid.x, grid.y, grid.z, block.x);
-          printf("Block size: %d, Warp block size: %d\n", BLOCK_SIZE, WARP_BLOCK_SIZE);
+          // printf("Launch params: grid: (%d %d %d), block: %d\n", grid.x, grid.y, grid.z, block.x);
+          // printf("Block size: %d, Warp block size: %d\n", BLOCK_SIZE, WARP_BLOCK_SIZE);
 
           QuantInt8Kernel_Varlen<HEAD_DIM, WARP_BLOCK_SIZE, num_pack_per_thread, false, false, c_type><<<grid, block>>>(
             reinterpret_cast<c_type*>(input.data()),

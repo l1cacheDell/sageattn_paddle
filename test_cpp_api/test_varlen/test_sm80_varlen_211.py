@@ -16,9 +16,21 @@ def precision_cmp_paddle(t1: paddle.Tensor, t2: paddle.Tensor):
     
     return sim, l1, max_diff
 
+# def create_tensor(bsz: int):
+#     tensors = []
+#     num_heads = 24
+#     head_dim = 128
+
+#     cu_seqlens = [0]
+
+#     for i in range(bsz):
+#         tensors.append(paddle.randn([i + 1, i + 1], dtype=paddle.float32))
+#     return paddle.stack(tensors)
+
 bsz = 3
-same_len = 510
-seq_len = same_len * 3
+same_len = 520
+same_len_div = int(same_len / 2)
+seq_len = same_len * 2
 num_heads = 24
 head_dim = 128
 
@@ -30,7 +42,7 @@ q = paddle.randn(shape=(seq_len, num_heads, head_dim), dtype=paddle.float16)
 k = paddle.randn(shape=(seq_len, num_heads, head_dim), dtype=paddle.float16)
 v = paddle.randn(shape=(seq_len, num_heads, head_dim), dtype=paddle.float16)
 
-cu_seqlens = paddle.to_tensor([0, same_len, same_len * 2, same_len * 3], dtype=paddle.int32)
+cu_seqlens = paddle.to_tensor([0, same_len, int(same_len * 1.5), same_len * 2], dtype=paddle.int32)
 
 segment_lengths = paddle.concat([cu_seqlens[:1], cu_seqlens[1:] - cu_seqlens[:-1]])[1:]
 segment_ids = paddle.concat([paddle.full([length], i, dtype='int32') for i, length in enumerate(segment_lengths)])
@@ -55,9 +67,9 @@ o1, q_int8, k_int8, km_out = sageattn_custom_ops.sage_attention_varlen(q,
                                                 return_lse=return_lse)
 
 # =======================================================================
-q1, q2, q3 = paddle.split(q, [same_len, same_len, same_len], axis=0)
-k1, k2, k3 = paddle.split(k, [same_len, same_len, same_len], axis=0)
-v1, v2, v3 = paddle.split(v, [same_len, same_len, same_len], axis=0)
+q1, q2, q3 = paddle.split(q, [same_len, same_len_div, same_len_div], axis=0)
+k1, k2, k3 = paddle.split(k, [same_len, same_len_div, same_len_div], axis=0)
+v1, v2, v3 = paddle.split(v, [same_len, same_len_div, same_len_div], axis=0)
 
 q1 = paddle.unsqueeze(q1, axis=0)
 k1 = paddle.unsqueeze(k1, axis=0)
@@ -99,7 +111,7 @@ print(o1.shape)
 # print(q_int8)
 
 # compare quant results
-q_int8_varlen_1, q_int8_varlen_2, q_int8_varlen_3 = paddle.split(q_int8, [same_len, same_len, same_len], axis=0)
+q_int8_varlen_1, q_int8_varlen_2, q_int8_varlen_3 = paddle.split(q_int8, [same_len, same_len_div, same_len_div], axis=0)
 sim_q_int8_1, _, max_diff_q_int8_1 = precision_cmp_paddle(q_int8_1.squeeze(0), q_int8_varlen_1)
 sim_q_int8_2, _, max_diff_q_int8_2 = precision_cmp_paddle(q_int8_2.squeeze(0), q_int8_varlen_2)
 sim_q_int8_3, _, max_diff_q_int8_3 = precision_cmp_paddle(q_int8_3.squeeze(0), q_int8_varlen_3)
@@ -108,7 +120,7 @@ print(f"sim_q_int8_2: {sim_q_int8_2}, max_diff_q_int8_2: {max_diff_q_int8_2}")
 print(f"sim_q_int8_3: {sim_q_int8_3}, max_diff_q_int8_3: {max_diff_q_int8_3}")
 
 
-k_int8_varlen_1, k_int8_varlen_2, k_int8_varlen_3 = paddle.split(k_int8, [same_len, same_len, same_len], axis=0)
+k_int8_varlen_1, k_int8_varlen_2, k_int8_varlen_3 = paddle.split(k_int8, [same_len, same_len_div, same_len_div], axis=0)
 sim_k_int8_1, _, max_diff_k_int8_1 = precision_cmp_paddle(k_int8_1.squeeze(0), k_int8_varlen_1)
 sim_k_int8_2, _, max_diff_k_int8_2 = precision_cmp_paddle(k_int8_2.squeeze(0), k_int8_varlen_2)
 sim_k_int8_3, _, max_diff_k_int8_3 = precision_cmp_paddle(k_int8_3.squeeze(0), k_int8_varlen_3)
@@ -148,7 +160,7 @@ print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}")
 # print(o1)
 print("\n=========================================================\n")
 
-o1_seg_1, o1_seg_2, o1_seg_3 = paddle.split(o1, [same_len, same_len, same_len], axis=0)
+o1_seg_1, o1_seg_2, o1_seg_3 = paddle.split(o1, [same_len, same_len_div, same_len_div], axis=0)
 sim, l1, mdiff = precision_cmp_paddle(o1_seg_1.unsqueeze(0), o_set_1)
 print(f"seg_1 sim: {sim}, l1: {l1}, max_diff: {mdiff}")
 
@@ -157,3 +169,23 @@ print(f"seg_2 sim: {sim}, l1: {l1}, max_diff: {mdiff}")
 
 sim, l1, mdiff = precision_cmp_paddle(o1_seg_3.unsqueeze(0), o_set_3)
 print(f"seg_3 sim: {sim}, l1: {l1}, max_diff: {mdiff}")
+
+# just analyze the third segment
+print("\n=========================================================\n")
+
+sim, l1, mdiff = precision_cmp_paddle(o1_seg_3.unsqueeze(0)[:, :same_len_div//2, :, :], o_set_3[:, :same_len_div//2, :, :])
+print(f"seg_3 1st seg sim: {sim}, l1: {l1}, max_diff: {mdiff}") # 0.3104 - 3.95
+
+sim, l1, mdiff = precision_cmp_paddle(o1_seg_3.unsqueeze(0)[:, same_len_div//2:, :, :], o_set_3[:, same_len_div//2:, :, :])
+print(f"seg_3 2nd seg sim: {sim}, l1: {l1}, max_diff: {mdiff}") # 0.9999 - 0.01
+
+print("\n=========================================================\n")
+
+# analyze the 1st segment - 64, and 64:
+first_seg_1, first_seg_2 = o1_seg_3.unsqueeze(0)[:, :same_len_div//2, :, :], o_set_3[:, :same_len_div//2, :, :]
+
+sim, l1, mdiff = precision_cmp_paddle(o1_seg_3.unsqueeze(0)[:, :64, :, :], o_set_3[:, :64, :, :])
+print(f"seg_3 1st seg - :64 sim: {sim}, l1: {l1}, max_diff: {mdiff}")   # 0.1855 - 3.024
+
+sim, l1, mdiff = precision_cmp_paddle(o1_seg_3.unsqueeze(0)[:, 64:, :, :], o_set_3[:, 64:, :, :])
+print(f"seg_3 1st seg - 64: sim: {sim}, l1: {l1}, max_diff: {mdiff}")   # 0.7669 - 1.270

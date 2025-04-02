@@ -157,6 +157,7 @@ for capability in compute_capabilities:
     elif capability[0] == "8" and capability[2] == "0":
         source_files += [
             'csrc/sageattn_qk_int_sv_f16_kernel_sm80.cu',
+            'csrc/sageattn_qk_int_sv_f16_kernel_sm80_varlen.cu'
         ]
     elif capability[0] == "8" and capability[2] == "9":
         source_files += [

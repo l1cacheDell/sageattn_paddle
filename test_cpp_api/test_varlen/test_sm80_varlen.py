@@ -16,17 +16,6 @@ def precision_cmp_paddle(t1: paddle.Tensor, t2: paddle.Tensor):
     
     return sim, l1, max_diff
 
-# def create_tensor(bsz: int):
-#     tensors = []
-#     num_heads = 24
-#     head_dim = 128
-
-#     cu_seqlens = [0]
-
-#     for i in range(bsz):
-#         tensors.append(paddle.randn([i + 1, i + 1], dtype=paddle.float32))
-#     return paddle.stack(tensors)
-
 bsz = 2
 seq_len = 1025
 num_heads = 24
