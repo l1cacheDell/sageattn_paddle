@@ -260,7 +260,7 @@ __global__ void qk_int_sv_f16_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t 
 
   // load K with predicate
   load_global_to_share<global_to_shared_line_lanes_QK, global_to_shared_copy_lines_per_warp_QK, QK_smem_iters_row, K_smem_iters_col, swizzle_mode_QK, QK_SMEM_STRIDE / PACK_SIZE_QK, CTA_K>(
-    &K_lane_base_ptr, K_smem_offset_load, stride_seq_k, smem_K, K_load_idx_lane_base, kv_len);
+    &K_lane_base_ptr, K_smem_offset_load, stride_seq_k, smem_K, K_load_idx_lane_base, num_tokens);  // originally `kv_len`
   cp_async::commit_group();
 
   float q_scale = Q_scale[q_scale_idx];
@@ -272,7 +272,7 @@ __global__ void qk_int_sv_f16_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t 
 
   // load V with predicate
   load_global_to_share<global_to_shared_line_lanes_V, global_to_shared_copy_lines_per_warp_V, V_smem_iters_row, V_smem_iters_col, swizzle_mode_V, V_SMEM_STRIDE / PACK_SIZE_V, CTA_K>(
-    &V_lane_base_ptr, V_smem_offset_load, stride_seq_v, smem_V, V_load_idx_lane_base, kv_len);
+    &V_lane_base_ptr, V_smem_offset_load, stride_seq_v, smem_V, V_load_idx_lane_base, num_tokens);  // originally `kv_len`
   cp_async::commit_group();
 
   K_load_idx_lane_base += CTA_K;
@@ -440,7 +440,7 @@ __global__ void qk_int_sv_f16_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t 
 
     // load K with predicate
     load_global_to_share<global_to_shared_line_lanes_QK, global_to_shared_copy_lines_per_warp_QK, QK_smem_iters_row, K_smem_iters_col, swizzle_mode_QK, QK_SMEM_STRIDE / PACK_SIZE_QK, CTA_K>(
-      &K_lane_base_ptr, K_smem_offset_load, stride_seq_k, smem_K, K_load_idx_lane_base, kv_len);
+      &K_lane_base_ptr, K_smem_offset_load, stride_seq_k, smem_K, K_load_idx_lane_base, num_tokens);  // originally `kv_len`
     cp_async::commit_group();
 
     dequant_scale = q_scale * K_scale[k_scale_idx + (num_iterations - 1) * k_scale_advance_offset];
@@ -464,7 +464,7 @@ __global__ void qk_int_sv_f16_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t 
     __syncthreads();
     // load V with predicate
     load_global_to_share<global_to_shared_line_lanes_V, global_to_shared_copy_lines_per_warp_V, V_smem_iters_row, V_smem_iters_col, swizzle_mode_V, V_SMEM_STRIDE / PACK_SIZE_V, CTA_K>(
-      &V_lane_base_ptr, V_smem_offset_load, stride_seq_v, smem_V, V_load_idx_lane_base, kv_len);
+      &V_lane_base_ptr, V_smem_offset_load, stride_seq_v, smem_V, V_load_idx_lane_base, num_tokens);  // originally `kv_len`
     cp_async::commit_group();
     K_load_idx_lane_base += CTA_K;
     V_load_idx_lane_base += CTA_K;
@@ -509,7 +509,7 @@ __global__ void qk_int_sv_f16_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t 
       apply_causal_mask<num_tiles_q, num_tiles_k>(Q_idx_lane_base, K_idx_lane_base, RS_f32);
     }
     // check out of bound in the last iter
-    apply_out_of_bound_mask<num_tiles_q, num_tiles_k>(K_idx_lane_base, RS_f32, kv_len);
+    apply_out_of_bound_mask<num_tiles_q, num_tiles_k>(K_idx_lane_base, RS_f32, num_tokens); // originally `kv_len`
     K_idx_lane_base += CTA_K;
 
     if constexpr (std::is_same<DTypeSVAccum, float>::value)
