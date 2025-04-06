@@ -163,6 +163,7 @@ for capability in compute_capabilities:
     elif capability[0] == "8" and capability[2] == "9":
         source_files += [
             'csrc/sageattn_qk_int_sv_f8_kernel_sm89.cu',
+            'csrc/sageattn_qk_int_sv_f8_kernel_sm89_varlen.cu'
         ]
 
 setup(
