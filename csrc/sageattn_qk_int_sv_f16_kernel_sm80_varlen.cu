@@ -87,7 +87,8 @@ __global__ void qk_int_sv_f16_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t 
 
   // dim3 grid(div_ceil(qo_len, CTA_Q), num_qo_heads, batch_size);
   // dim3 block(32, (CTA_Q / WARP_Q) * (CTA_K / WARP_K));  128 / 32 x 64 / 64 = 4, 实际上就是 128 threads in total
-  if (bx * CTA_Q >= cu_seqlen[blockIdx.z + 1] - cu_seqlen[blockIdx.z]) return;
+  const uint32_t num_tokens = cu_seqlen[blockIdx.z + 1] - cu_seqlen[blockIdx.z];
+  if (bx * CTA_Q >= num_tokens) return;
 
   // transfer to base 2 instead of base e with better numerical efficiency
   sm_scale *= math::log2e;
@@ -240,7 +241,7 @@ __global__ void qk_int_sv_f16_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t 
 
   // load Q with predicate
   load_global_to_share<global_to_shared_line_lanes_QK, global_to_shared_copy_lines_per_warp_QK, QK_smem_iters_row, Q_smem_iters_col, swizzle_mode_QK, QK_SMEM_STRIDE / PACK_SIZE_QK, CTA_Q>(
-    &Q_lane_base_ptr, Q_smem_offset_load, stride_seq_q, smem_Q, Q_load_idx_lane_base, qo_len);
+    &Q_lane_base_ptr, Q_smem_offset_load, stride_seq_q, smem_Q, Q_load_idx_lane_base, num_tokens);  // originally qo_len
   cp_async::commit_group();
   cp_async::wait_group<0>();
   __syncthreads();
@@ -649,6 +650,8 @@ __global__ void qk_int_sv_f16_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t 
 
   // shared memory to global memory
   // Output index
+  // notice: the qo_len!!! -> the qo_len is the max_seq_len, actually will affect the write index
+  // so let's use `num_tokens` instead
   DTypeOut *O_lane_ptr = O + 
                         cu_seqlen[batch_id] * stride_seq_o + 
                         head_id * stride_h_o + 
@@ -668,7 +671,7 @@ __global__ void qk_int_sv_f16_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t 
 #pragma unroll
     for (uint32_t j = 0; j < O_smem_iters_row; j++)
     {
-      if (O_load_idx_lane_base < qo_len)
+      if (O_load_idx_lane_base < num_tokens)
       {
         smem_O.store_128b(offset_O, O_lane_ptr);
       }
