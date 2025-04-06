@@ -277,10 +277,14 @@ __global__ void TransposePadPermuteVarlenKernel(T *__restrict__ input,  // total
   *(float4*)(output_ptr_base) = *(float4*)(&shared_store[thread_id / num_threads_per_cta][thread_id % num_threads_per_cta * pack_size]);  // 4 x 32 bit
 }
 
+// this kernel is used to sub mean, and get the v scale, and get fp8 v.
 template<uint32_t pad_size, bool sub_mean = false, typename T>
-__global__ void MeanScaleVarlenKernel(T *__restrict__ input, int8_t *__restrict__ output, float *__restrict__ mean, float *__restrict__ scale, 
+__global__ void MeanScaleVarlenKernel(T *__restrict__ input,  // [head_dim, num_head, total_padded_seqlen]
+                            int8_t *__restrict__ output,      // [head_dim, num_head, total_padded_seqlen]
+                            float *__restrict__ mean, float *__restrict__ scale, 
                             uint32_t *__restrict__ padded_cu_seqlen,
-                            const float scale_max, const uint32_t num_tokens,
+                            const float scale_max, 
+                            const uint32_t num_tokens,  // max_seqlen_v, unpadded
                             const uint32_t stride_d_input, const uint32_t stride_h_input,
                             const uint32_t stride_d_output, const uint32_t stride_h_output,
                             const uint32_t stride_bz_mean, const uint32_t stride_h_mean,
@@ -297,12 +301,17 @@ __global__ void MeanScaleVarlenKernel(T *__restrict__ input, int8_t *__restrict_
 
   uint32_t num_threads = blockDim.x;
   uint32_t gmem_stride = num_threads * pack_size;
+
+  const uint32_t num_head = gridDim.x;
+  const uint32_t head_dim = gridDim.z;
   // pad the number of tokens to 16 to deal with fp8 permute in previous kernel
   uint32_t fp8_padded_num_tokens = (num_tokens + 15) / 16 * 16;
   uint32_t num_iters = fp8_padded_num_tokens / gmem_stride + ((fp8_padded_num_tokens % gmem_stride) > thread_id * pack_size);
 
-  T *input_ptr_base = input + batch_id * stride_bz_input + head_id * stride_h_input + d_id * stride_d_input + thread_id * pack_size;
-  int8_t *output_ptr_base = output + batch_id * stride_bz_output + head_id * stride_h_output + d_id * stride_d_output + thread_id * pack_size;
+  // T *input_ptr_base = input + batch_id * stride_bz_input + head_id * stride_h_input + d_id * stride_d_input + thread_id * pack_size;
+  T *input_ptr_base = input + padded_cu_seqlen[batch_id] * num_head * head_dim + head_id * stride_h_input + d_id * stride_d_input + thread_id * pack_size;
+  // int8_t *output_ptr_base = output + batch_id * stride_bz_output + head_id * stride_h_output + d_id * stride_d_output + thread_id * pack_size;
+  int8_t *output_ptr_base = output + padded_cu_seqlen[batch_id] * num_head * head_dim + head_id * stride_h_output + d_id * stride_d_output + thread_id * pack_size;
 
   T x_val[8];
   float x_val_float[8];
@@ -604,7 +613,6 @@ void scale_fuse_quant_varlen_cuda_fwd(
                 paddle::Tensor& scale,  // [b, num_head, head_dim]
                 paddle::Tensor& padded_cu_seqlen,
                 int max_seqlen_v, // unpadded max seqlen
-                int num_tokens,
                 float scale_max,
                 int tensor_layout)
 {
@@ -642,6 +650,7 @@ void scale_fuse_quant_varlen_cuda_fwd(
 
   constexpr int CTA_SIZE = 256;
 
+  // this grid & block design, is seqlen-no-aware
   dim3 grid(num_heads, batch_size, head_dim);
   dim3 block(CTA_SIZE);
 
@@ -655,7 +664,7 @@ void scale_fuse_quant_varlen_cuda_fwd(
       reinterpret_cast<float*>(scale.data()),
       reinterpret_cast<uint32_t*>(padded_cu_seqlen.data()), 
       scale_max,
-      num_tokens,
+      max_seqlen_v,
       stride_d_input, stride_h_input,
       stride_d_output, stride_h_output,
       0, 0,
@@ -740,9 +749,9 @@ void mean_scale_fuse_quant_varlen_cuda_fwd(
       reinterpret_cast<float*>(scale.data()),
       reinterpret_cast<uint32_t*>(padded_cu_seqlen.data()), 
       scale_max,
-      num_tokens,
-      stride_bz_input, stride_d_input, stride_h_input,
-      stride_bz_output, stride_d_output, stride_h_output,
+      max_seqlen_v,
+      stride_d_input, stride_h_input,
+      stride_d_output, stride_h_output,
       mean.strides()[0], mean.strides()[1],
       scale.strides()[0], scale.strides()[1]
     );
@@ -797,6 +806,7 @@ std::vector<paddle::Tensor> per_warp_int8_varlen_cuda_fwd(paddle::Tensor& q,  //
 std::vector<paddle::Tensor> per_channel_varlen_fp8(paddle::Tensor& v, // total_seqlen x num_head x head_dim
                                                   paddle::Tensor& cu_seqlen_v,
                                                   paddle::Tensor& padded_cu_seqlen,
+                                                  int padded_total_seq_len,
                                                   int max_seq_len_v,
                                                   int tensor_layout,
                                                   float scale_max,
@@ -810,10 +820,6 @@ std::vector<paddle::Tensor> per_channel_varlen_fp8(paddle::Tensor& v, // total_s
     int kv_len = max_seq_len_v; // just the max seqlen v, not padded.
     int padded_len = (kv_len + 63) / 64 * 64;
 
-    int padded_total_seq_len = 0;
-    for (int i = 1; i < b; i++)
-      padded_total_seq_len += (cu_seqlen_v[i] - cu_seqlen_v[i - 1] + 63) / 64 * 64;
-
     paddle::Tensor v_transposed_permutted = paddle::empty({head_dim, h_kv, padded_total_seq_len}, v.dtype(), paddle::GPUPlace());
     
     transpose_pad_permute_varlen_cuda_fwd(v, v_transposed_permutted, 
@@ -824,9 +830,11 @@ std::vector<paddle::Tensor> per_channel_varlen_fp8(paddle::Tensor& v, // total_s
     paddle::Tensor v_scale = paddle::empty({b, h_kv, head_dim}, paddle::DataType::FLOAT32, paddle::GPUPlace());
     paddle::Tensor vm = paddle::empty({b, h_kv, head_dim}, paddle::DataType::FLOAT32, paddle::GPUPlace());
     if (smooth_v) {
-        mean_scale_fuse_quant_varlen_cuda_fwd(v_transposed_permutted, v_fp8, vm, v_scale, padded_cu_seqlen, kv_len, scale_max, tensor_layout);
+        // not supported.
     } else {
-        scale_fuse_quant_varlen_cuda_fwd(v_transposed_permutted, v_fp8, v_scale, kv_len, scale_max, tensor_layout);
+        scale_fuse_quant_varlen_cuda_fwd(v_transposed_permutted, v_fp8, v_scale, 
+                                        padded_cu_seqlen, 
+                                        kv_len, scale_max, tensor_layout);
     }
 
     return {v_fp8, v_scale, vm};
