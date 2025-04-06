@@ -3,7 +3,7 @@
 #include "paddle/extension.h"
 
 #include "sageattn_utils.cuh"
-#include "sageattn_fused.cuh"
+#include "sageattn_fused_varlen.cuh"
 
 #define PACK_SIZE_QK 16 // as if it is int8
 #define PACK_SIZE_V 16  // fp8
@@ -26,11 +26,13 @@ template<uint32_t CTA_Q, uint32_t CTA_K, uint32_t WARP_Q, uint32_t WARP_K, uint3
         typename DTypeSVAccum = float, bool use_inst_buffer = false, typename DTypeOut = half, ComputeUnit DenominatorAccumUnit, MaskMode mask_mode = MaskMode::kNone, bool return_lse = false, bool fuse_v_scale=false, bool fuse_v_mean=false>
 __global__ void qk_int_sv_f8_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t *__restrict__ K, int8_t *__restrict__ V, DTypeOut *__restrict__ O, float *__restrict__ Lse,
                       float *__restrict__ Q_scale, float *__restrict__ K_scale, float *__restrict__ V_scale, float *__restrict__ V_mean,
-                      const uint32_t qo_len, const uint32_t kv_len, const uint32_t num_kv_groups,
-                      const uint32_t stride_bz_q, const uint32_t stride_seq_q, const uint32_t stride_h_q, 
-                      const uint32_t stride_bz_k, const uint32_t stride_seq_k, const uint32_t stride_h_k,
-                      const uint32_t stride_bz_v, const uint32_t stride_h_v, const uint32_t stride_d_v,
-                      const uint32_t stride_bz_o, const uint32_t stride_seq_o, const uint32_t stride_h_o,
+                      uint32_t *__restrict__ cu_seqlen,
+                      const uint32_t qo_len, const uint32_t kv_len, // notice: this is max_seqlen
+                      const uint32_t num_kv_groups,
+                      const uint32_t stride_seq_q, const uint32_t stride_h_q, // no stride bz
+                      const uint32_t stride_seq_k, const uint32_t stride_h_k,
+                      const uint32_t stride_h_v, const uint32_t stride_d_v,
+                      const uint32_t stride_seq_o, const uint32_t stride_h_o,
                       float sm_scale)
 {
   // compile time check
@@ -671,3 +673,108 @@ __global__ void qk_int_sv_f8_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t *
     }
   }
 } // kernel impl end
+
+//
+//  =========== Exposed to Outside API - ARCH: SM89 ===========
+//
+
+std::vector<paddle::Tensor> sage_attention_varlen_fwd(paddle::Tensor& q,    // total_seqlen x num_head x head_dim
+                                                    paddle::Tensor& k,      // total_seqlen x num_head x head_dim
+                                                    paddle::Tensor& v,      // total_seqlen x num_head x head_dim
+                                                    paddle::Tensor& km,
+                                                    paddle::Tensor& cu_seqlen,
+                                                    paddle::Tensor& segment_ids,
+                                                    paddle::optional<paddle::Tensor>& vm,
+                                                    int max_seqlen_q,
+                                                    int max_seqlen_k,
+                                                    float sm_scale,
+                                                    std::string qk_quant_gran,
+                                                    std::string pv_accum_dtype,
+                                                    int tensor_layout,
+                                                    bool is_causal,
+                                                    bool smooth_k,
+                                                    bool smooth_v,
+                                                    bool return_lse)
+{
+  int _is_causal = int(is_causal);
+  int _qk_quant_gran = (qk_quant_gran == std::string("per_thread")) ? 3 : 2;
+  int _return_lse = int(return_lse);
+
+  PD_CHECK(pv_accum_dtype == std::string("fp32+fp32") || pv_accum_dtype == std::string("fp32"), "pv_accum_dtype must be either fp32 or fp32+fp32");
+  auto pv_accum_dtype_const = (pv_accum_dtype == std::string("fp32+fp32")) ? paddle::DataType::UNDEFINED : paddle::DataType::FLOAT32;
+
+  PD_CHECK(q.shape()[2] == 64 || q.shape()[2] == 128, "head_dim must be either 64 or 128");
+  PD_CHECK(q.strides()[2] == 1 && k.strides()[2] == 1 && v.strides()[2] == 1, "Last dim of qkv must be contiguous.");
+
+  int seq_dim = (tensor_layout == 0) ? 1 : 2;
+
+  // quant q, k -> q_int8, k_int8
+  constexpr int BLKQ = 128;
+  int WARPQ = 32;
+  constexpr int BLKK = 64;
+  std::vector<paddle::Tensor>&& quant_qk_results = per_warp_int8_varlen_cuda_fwd(q, k, km, BLKQ, WARPQ, BLKK, tensor_layout); // q_int8, q_scale, k_int8, k_scale
+
+  paddle::Tensor o = paddle::empty(v.shape(), v.dtype(), paddle::GPUPlace());
+
+  if (pv_accum_dtype_const == paddle::DataType::UNDEFINED) {
+    if (smooth_v) smooth_v = false;
+  }
+
+  std::vector<paddle::Tensor>&& quant_vfp8_results = per_channel_varlen_fp8(v, tensor_layout, 448.0, smooth_v);
+
+  switch (pv_accum_dtype_const) {
+    case paddle::DataType::FLOAT32: {
+      if (smooth_v) {
+        qk_int8_sv_f8_accum_f32_fuse_v_scale_fuse_v_mean_attn_fwd(quant_qk_results[0], quant_qk_results[2], quant_vfp8_results[0], o, quant_qk_results[1], quant_qk_results[3], quant_vfp8_results[1], quant_vfp8_results[2], tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse);
+      } else {
+        qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_fwd(quant_qk_results[0], quant_qk_results[2], quant_vfp8_results[0], o, quant_qk_results[1], quant_qk_results[3], quant_vfp8_results[1], tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse);
+      }
+      break;
+    }
+    case paddle::DataType::UNDEFINED: {
+      qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm89_fwd(quant_qk_results[0], quant_qk_results[2], quant_vfp8_results[0], o, quant_qk_results[1], quant_qk_results[3], quant_vfp8_results[1], tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse);
+      break;
+    }
+    default: {
+      throw std::runtime_error("pv_accum_dtype must be fp32 or fp32+fp32");
+      break;
+    }
+  }
+
+  return {o};
+}
+
+std::vector<std::vector<int64_t>> sage_attention_varlen_InferShape(
+  const std::vector<int64_t> query_shape, 
+  const std::vector<int64_t> key_shape, 
+  const std::vector<int64_t> value_shape,
+  const std::vector<int64_t> km_shape,
+  const paddle::optional<std::vector<int64_t>>& vm_shape) {
+    return {value_shape};
+}
+
+std::vector<paddle::DataType> sage_attention_varlen_InferDtype(
+  const paddle::DataType A_dtype,
+  const paddle::DataType B_dtype,
+  const paddle::DataType C_dtype,
+  const paddle::DataType D_dtype,
+  const paddle::optional<paddle::DataType>& E_dtype) {
+  return {C_dtype};
+}
+
+PD_BUILD_OP(sage_attention_varlen)
+    .Inputs({"q", "k", "v", "km", "cu_seqlen", "segment_ids", paddle::Optional("vm")})
+    .Outputs({"o"})
+    .Attrs({"max_seqlen_q: int",
+            "max_seqlen_k: int",
+            "sm_scale: float",
+            "qk_quant_gran: std::string",
+            "pv_accum_dtype: std::string",
+            "tensor_layout: int",
+            "is_causal: bool",
+            "smooth_k: bool",
+            "smooth_v: bool",
+            "return_lse: bool"})
+    .SetKernelFn(PD_KERNEL(sage_attention_varlen_fwd))
+    .SetInferShapeFn(PD_INFER_SHAPE(sage_attention_varlen_InferShape))
+    .SetInferDtypeFn(PD_INFER_DTYPE(sage_attention_varlen_InferDtype));

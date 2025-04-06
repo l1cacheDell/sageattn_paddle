@@ -255,6 +255,8 @@ __global__ void SubMeanKernel(T *__restrict__ input, T *__restrict__ mean, half 
   }
 }
 
+// from [b, seqlen, num_head, head_dim]
+// to   [b, head_dim, num_head, seqlen]
 template <uint32_t head_dim, uint32_t CTA_SIZE, bool pad_zero=false, typename T>
 __global__ void TransposePadPermuteKernel(T *__restrict__ input, T *__restrict__ output, const uint32_t num_tokens,
                             const uint32_t stride_bz_input, const uint32_t stride_seq_input, const uint32_t stride_h_input,
@@ -848,7 +850,7 @@ void sub_mean_cuda_fwd(paddle::Tensor& input,
 
 // quant v用，但是v不是192，所以可以沿用原来的DISPATCH_HEAD_DIM
 void transpose_pad_permute_cuda_fwd(
-                paddle::Tensor& input,
+                paddle::Tensor& input,  // [b, seq_len, num_head, head_dim]
                 paddle::Tensor& output,
                 int tensor_layout)
 {

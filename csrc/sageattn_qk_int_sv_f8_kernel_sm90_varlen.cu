@@ -1,17 +1,16 @@
 #include "sageattn_qk_int_sv_f8_kernel_sm90.cuh"
 
-//
-// ======= kernel impl =======
-//
-
 template<uint32_t CTA_Q, uint32_t CTA_K, uint32_t NUM_THREADS, uint32_t head_dim, QuantGranularity Q_GRAN, QuantGranularity K_GRAN, typename DTypeOut, MaskMode mask_mode = MaskMode::kNone, bool fuse_v_scale=false>
-__global__ void qk_int8_sv_f8_attn_kernel(const __grid_constant__ CUtensorMap tensorMapQ, 
-                                        const __grid_constant__ CUtensorMap tensorMapK,
-                                        const __grid_constant__ CUtensorMap tensorMapV,
-                                        float *__restrict__ Q_scale, float *__restrict__ K_scale, float *__restrict__ V_scale,
-                                        DTypeOut* O, uint32_t stride_bz_o, uint32_t stride_h_o, uint32_t stride_seq_o,
-                                        const uint32_t qo_len, const uint32_t kv_len, const uint32_t num_kv_groups,
-                                        float sm_scale)
+__global__ void qk_int8_sv_f8_attn_varlen_kernel(const __grid_constant__ CUtensorMap tensorMapQ, 
+                                                const __grid_constant__ CUtensorMap tensorMapK,
+                                                const __grid_constant__ CUtensorMap tensorMapV,
+                                                float *__restrict__ Q_scale, float *__restrict__ K_scale, float *__restrict__ V_scale,
+                                                DTypeOut* O, 
+                                                uint32_t stride_h_o, uint32_t stride_seq_o,
+                                                const uint32_t qo_len, // max_seqlen_q
+                                                const uint32_t kv_len, 
+                                                const uint32_t num_kv_groups,
+                                                float sm_scale)
 {
   static_assert(NUM_THREADS == 128);
   static_assert(CTA_Q <= CTA_K);
@@ -433,182 +432,18 @@ __global__ void qk_int8_sv_f8_attn_kernel(const __grid_constant__ CUtensorMap te
   }
 }
 
-std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_attn_inst_buf_sm90_fwd(
-                  paddle::Tensor& query,
-                  paddle::Tensor& key,
-                  paddle::Tensor& value,
-                  paddle::Tensor& output,
-                  paddle::Tensor& query_scale,
-                  paddle::Tensor& key_scale,
-                  int tensor_layout,
-                  int is_causal,
-                  int qk_quant_gran,
-                  float sm_scale,
-                  int return_lse)
-{
-  CHECK_CUDA(query);
-  CHECK_CUDA(key);
-  CHECK_CUDA(value);
-  CHECK_CUDA(output);
-  CHECK_CUDA(query_scale);
-  CHECK_CUDA(key_scale);
-
-  CHECK_LASTDIM_CONTIGUOUS(query);
-  CHECK_LASTDIM_CONTIGUOUS(key);
-  CHECK_LASTDIM_CONTIGUOUS(value);
-  CHECK_LASTDIM_CONTIGUOUS(output);
-  CHECK_CONTIGUOUS(query_scale);
-  CHECK_CONTIGUOUS(key_scale);
-
-  CHECK_DTYPE(query, paddle::DataType::INT8);
-  CHECK_DTYPE(key, paddle::DataType::INT8);
-  CHECK_DTYPE(value, paddle::DataType::FLOAT8_E4M3FN);
-  CHECK_DTYPE(query_scale, paddle::DataType::FLOAT32);
-  CHECK_DTYPE(key_scale, paddle::DataType::FLOAT32);
-
-  CHECK_DIMS(query, 4);
-  CHECK_DIMS(key, 4);
-  CHECK_DIMS(value, 4);
-  CHECK_DIMS(output, 4);
-  CHECK_DIMS(query_scale, 3);
-  CHECK_DIMS(key_scale, 3);
-
-  const int batch_size = query.shape()[0];
-  const int head_dim = query.shape()[3];
-
-  int stride_bz_q = query.strides()[0];
-  int stride_bz_k = key.strides()[0];
-  int stride_bz_v = value.strides()[0];
-  int stride_bz_o = output.strides()[0];
-
-  int qo_len, kv_len, padded_kv_len, num_qo_heads, num_kv_heads;
-  int stride_seq_q, stride_h_q, stride_seq_k, stride_h_k, stride_h_v, stride_d_v, stride_seq_o, stride_h_o;
-
-  assert(value.shape()[0] == batch_size);
-
-  if (tensor_layout == 0)
-  {
-    qo_len = query.shape()[1];
-    kv_len = key.shape()[1];
-    num_qo_heads = query.shape()[2];
-    num_kv_heads = key.shape()[2];
-
-    stride_seq_q = query.strides()[1];
-    stride_h_q = query.strides()[2];
-    stride_seq_k = key.strides()[1];
-    stride_h_k = key.strides()[2];
-    stride_h_v = value.strides()[2];
-    stride_d_v = value.strides()[1];
-    stride_seq_o = output.strides()[1];
-    stride_h_o = output.strides()[2];
-
-    CHECK_SHAPE(key, batch_size, kv_len, num_kv_heads, head_dim);
-    CHECK_SHAPE(output, batch_size, qo_len, num_qo_heads, head_dim);
-    assert(value.shape()[1] == head_dim);
-    assert(value.shape()[2] == num_kv_heads);
-  }
-  else
-  {
-    qo_len = query.shape()[2];
-    kv_len = key.shape()[2];
-    num_qo_heads = query.shape()[1];
-    num_kv_heads = key.shape()[1];
-
-    stride_seq_q = query.strides()[2];
-    stride_h_q = query.strides()[1];
-    stride_seq_k = key.strides()[2];
-    stride_h_k = key.strides()[1];
-    stride_h_v = value.strides()[1];
-    stride_d_v = value.strides()[2];
-    stride_seq_o = output.strides()[2];
-    stride_h_o = output.strides()[1];
-
-    CHECK_SHAPE(key, batch_size, num_kv_heads, kv_len, head_dim);
-    CHECK_SHAPE(output, batch_size, num_qo_heads, qo_len, head_dim);
-    assert(value.shape()[2] == head_dim);
-    assert(value.shape()[1] == num_kv_heads);
-  }
-
-  if (num_qo_heads % num_kv_heads != 0) {
-    std::ostringstream err_msg;
-    err_msg << "num_qo_heads (" << num_qo_heads << ") must be divisible by num_kv_heads (" << num_kv_heads << ")";
-    throw std::invalid_argument(err_msg.str());  
-  }
-
-  paddle::Tensor lse = paddle::empty({0}, paddle::DataType::FLOAT32);
-  if (return_lse)
-  {
-    lse = paddle::empty({batch_size, num_qo_heads, qo_len}, paddle::DataType::FLOAT32);
-  }
-
-  const int num_kv_groups = num_qo_heads / num_kv_heads;
-
-  auto output_type = output.dtype();
-
-  DISPATCH_HEAD_DIM(head_dim, HEAD_DIM, {
-    DISPATCH_CAUSAL(is_causal, IS_CAUSAL, {
-      DISPATCH_QK_QUANT_GRAN(qk_quant_gran, QK_QUANT_GRAN, {
-        DISPATCH_PADDLE_DTYPE_TO_CTYPE_FP16(output_type, DTypeOut, {
-          constexpr int CTA_Q = 64;
-          constexpr int CTA_K = 128;
-          constexpr int NUM_THREADS = 128;
-
-          constexpr MaskMode mask_mode = IS_CAUSAL ? MaskMode::kCausal : MaskMode::kNone;
-
-          assert(value.shape()[3] >= div_ceil(kv_len, CTA_K) * CTA_K);
-
-          if constexpr (QK_QUANT_GRAN == static_cast<int>(QuantGranularity::kPerWarp))
-          {
-            CHECK_SHAPE(query_scale, batch_size, num_qo_heads, static_cast<long>(div_ceil(qo_len, CTA_Q) * (NUM_THREADS / 32)));
-            CHECK_SHAPE(key_scale, batch_size, num_kv_heads, static_cast<long>(div_ceil(kv_len, CTA_K)));
-          }
-          else if constexpr (QK_QUANT_GRAN == static_cast<int>(QuantGranularity::kPerThread))
-          {
-            CHECK_SHAPE(query_scale, batch_size, num_qo_heads, static_cast<long>(div_ceil(qo_len, CTA_Q) * (NUM_THREADS / 32) * 8));
-            CHECK_SHAPE(key_scale, batch_size, num_kv_heads, static_cast<long>(div_ceil(kv_len, CTA_K) * 4));    
-          }
-          else
-          {
-            static_assert(QK_QUANT_GRAN == static_cast<int>(QuantGranularity::kPerWarp) || QK_QUANT_GRAN == static_cast<int>(QuantGranularity::kPerThread), "Unsupported quantization granularity");
-          }
-
-          CUtensorMap tma_map_Q = create_tensor_map_4D<CTA_Q, HEAD_DIM>(reinterpret_cast<int8_t*>(query.data()), batch_size, num_qo_heads, qo_len, HEAD_DIM, stride_bz_q, stride_h_q, stride_seq_q);
-          CUtensorMap tma_map_K = create_tensor_map_4D<CTA_K, HEAD_DIM>(reinterpret_cast<int8_t*>(key.data()), batch_size, num_kv_heads, kv_len, HEAD_DIM, stride_bz_k, stride_h_k, stride_seq_k);
-          CUtensorMap tma_map_V = create_tensor_map_4D<HEAD_DIM, CTA_K>(reinterpret_cast<int8_t*>(value.data()), batch_size, num_kv_heads, HEAD_DIM, value.shape()[3], stride_bz_v, stride_h_v, stride_d_v);
-
-          auto* kernel = qk_int8_sv_f8_attn_kernel<CTA_Q, CTA_K, NUM_THREADS, HEAD_DIM, static_cast<QuantGranularity>(QK_QUANT_GRAN), static_cast<QuantGranularity>(QK_QUANT_GRAN), DTypeOut, mask_mode, false>;
-          size_t sMemSize = CTA_Q * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t);
-          cudaFuncSetAttribute(
-              kernel,
-              cudaFuncAttributeMaxDynamicSharedMemorySize, sMemSize);
-          
-          dim3 grid(div_ceil(qo_len, CTA_Q), num_qo_heads, batch_size);
-          kernel<<<grid, NUM_THREADS, sMemSize>>>(
-            tma_map_Q,
-            tma_map_K,
-            tma_map_V,
-            reinterpret_cast<float*>(query_scale.data()),
-            reinterpret_cast<float*>(key_scale.data()),
-            nullptr,
-            reinterpret_cast<DTypeOut*>(output.data()),
-            stride_bz_o, stride_h_o, stride_seq_o,
-            qo_len, kv_len, num_kv_groups, sm_scale);
-        });
-      });
-    });
-  });
-
-  return {lse};
-}
-
 std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm90_fwd(
-                    paddle::Tensor& query,
-                    paddle::Tensor& key,
-                    paddle::Tensor& value,
-                    paddle::Tensor& output,
+                    paddle::Tensor& query,      // total_seqlen x num_head x head_dim
+                    paddle::Tensor& key,        // total_seqlen x num_head x head_dim
+                    paddle::Tensor& value,      // total_seqlen x num_head x head_dim
+                    paddle::Tensor& output,     // total_seqlen x num_head x head_dim
                     paddle::Tensor& query_scale,
                     paddle::Tensor& key_scale,
                     paddle::Tensor& value_scale,
+                    paddle::Tensor& cu_seqlen_q,
+                    paddle::Tensor& segment_ids,
+                    int max_seqlen_q,
+                    int max_seqlen_k,
                     int tensor_layout,
                     int is_causal,
                     int qk_quant_gran,
@@ -638,69 +473,39 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_s
   CHECK_DTYPE(key_scale, paddle::DataType::FLOAT32);
   CHECK_DTYPE(value_scale, paddle::DataType::FLOAT32);
 
-  CHECK_DIMS(query, 4);
-  CHECK_DIMS(key, 4);
-  CHECK_DIMS(value, 4);
-  CHECK_DIMS(output, 4);
+  CHECK_DIMS(query, 3);
+  CHECK_DIMS(key, 3);
+  CHECK_DIMS(value, 3);
+  CHECK_DIMS(output, 3);
+
   CHECK_DIMS(query_scale, 3);
   CHECK_DIMS(key_scale, 3);
   CHECK_DIMS(value_scale, 3);
 
-  const int batch_size = query.shape()[0];
-  const int head_dim = query.shape()[3];
-
-  int stride_bz_q = query.strides()[0];
-  int stride_bz_k = key.strides()[0];
-  int stride_bz_v = value.strides()[0];
-  int stride_bz_o = output.strides()[0];
+  const int batch_size = cu_seqlen_q.shape()[0] - 1;
+  const int head_dim = query.shape()[2];
 
   int qo_len, kv_len, padded_kv_len, num_qo_heads, num_kv_heads;
-  int stride_seq_q, stride_h_q, stride_seq_k, stride_h_k, stride_h_v, stride_d_v, stride_seq_o, stride_h_o;
+  int stride_seq_q, stride_h_q, stride_seq_k, stride_h_k;
+  int stride_h_v, stride_d_v;
+  int stride_seq_o, stride_h_o;
 
-  assert(value.shape()[0] == batch_size);
+  qo_len = max_seqlen_q;
+  kv_len = max_seqlen_k;
 
-  if (tensor_layout == 0)
-  {
-    qo_len = query.shape()[1];
-    kv_len = key.shape()[1];
-    num_qo_heads = query.shape()[2];
-    num_kv_heads = key.shape()[2];
+  num_qo_heads = query.shape()[1];
+  num_kv_heads = key.shape()[1];
 
-    stride_seq_q = query.strides()[1];
-    stride_h_q = query.strides()[2];
-    stride_seq_k = key.strides()[1];
-    stride_h_k = key.strides()[2];
-    stride_h_v = value.strides()[2];
-    stride_d_v = value.strides()[1];
-    stride_seq_o = output.strides()[1];
-    stride_h_o = output.strides()[2];
+  stride_seq_q = query.strides()[0];
+  stride_seq_k = key.strides()[0];
 
-    CHECK_SHAPE(key, batch_size, kv_len, num_kv_heads, head_dim);
-    CHECK_SHAPE(output, batch_size, qo_len, num_qo_heads, head_dim);
-    assert(value.shape()[1] == head_dim);
-    assert(value.shape()[2] == num_kv_heads);
-  }
-  else
-  {
-    qo_len = query.shape()[2];
-    kv_len = key.shape()[2];
-    num_qo_heads = query.shape()[1];
-    num_kv_heads = key.shape()[1];
+  stride_seq_o = output.strides()[0];
 
-    stride_seq_q = query.strides()[2];
-    stride_h_q = query.strides()[1];
-    stride_seq_k = key.strides()[2];
-    stride_h_k = key.strides()[1];
-    stride_h_v = value.strides()[1];
-    stride_d_v = value.strides()[2];
-    stride_seq_o = output.strides()[2];
-    stride_h_o = output.strides()[1];
+  stride_h_q = query.strides()[1];
+  stride_h_k = key.strides()[1];
 
-    CHECK_SHAPE(key, batch_size, num_kv_heads, kv_len, head_dim);
-    CHECK_SHAPE(output, batch_size, num_qo_heads, qo_len, head_dim);
-    assert(value.shape()[2] == head_dim);
-    assert(value.shape()[1] == num_kv_heads);
-  }
+  stride_h_v = value.strides()[1];
+  stride_h_o = output.strides()[1];
 
   if (num_qo_heads % num_kv_heads != 0) {
     std::ostringstream err_msg;
@@ -747,11 +552,12 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_s
 
           CHECK_SHAPE(value_scale, batch_size, num_kv_heads, head_dim);
 
+          // TODO: we need to change here
           CUtensorMap tma_map_Q = create_tensor_map_4D<CTA_Q, HEAD_DIM>(reinterpret_cast<int8_t*>(query.data()), batch_size, num_qo_heads, qo_len, HEAD_DIM, stride_bz_q, stride_h_q, stride_seq_q);
           CUtensorMap tma_map_K = create_tensor_map_4D<CTA_K, HEAD_DIM>(reinterpret_cast<int8_t*>(key.data()), batch_size, num_kv_heads, kv_len, HEAD_DIM, stride_bz_k, stride_h_k, stride_seq_k);
           CUtensorMap tma_map_V = create_tensor_map_4D<HEAD_DIM, CTA_K>(reinterpret_cast<int8_t*>(value.data()), batch_size, num_kv_heads, HEAD_DIM, value.shape()[3], stride_bz_v, stride_h_v, stride_d_v);
 
-          auto* kernel = qk_int8_sv_f8_attn_kernel<CTA_Q, CTA_K, NUM_THREADS, HEAD_DIM,  static_cast<QuantGranularity>(QK_QUANT_GRAN), static_cast<QuantGranularity>(QK_QUANT_GRAN), DTypeOut, mask_mode, true>;
+          auto* kernel = qk_int8_sv_f8_attn_varlen_kernel<CTA_Q, CTA_K, NUM_THREADS, HEAD_DIM,  static_cast<QuantGranularity>(QK_QUANT_GRAN), static_cast<QuantGranularity>(QK_QUANT_GRAN), DTypeOut, mask_mode, true>;
           size_t sMemSize = CTA_Q * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t);
           cudaFuncSetAttribute(
               kernel,
@@ -766,7 +572,7 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_s
             reinterpret_cast<float*>(key_scale.data()),
             reinterpret_cast<float*>(value_scale.data()),
             reinterpret_cast<DTypeOut*>(output.data()),
-            stride_bz_o, stride_h_o, stride_seq_o,
+            stride_h_o, stride_seq_o,
             qo_len, kv_len, num_kv_groups, sm_scale);
         });
       });
@@ -775,81 +581,3 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_s
 
   return {lse};
 }
-
-//
-//  =========== Exposed to Outside API - ARCH: SM90 ===========
-//
-
-std::vector<paddle::Tensor> sage_attention_fwd(paddle::Tensor& q,
-                                               paddle::Tensor& k,
-                                               paddle::Tensor& v,
-                                               paddle::Tensor& km,
-                                               paddle::optional<paddle::Tensor>& vm,
-                                               float sm_scale,
-                                               std::string qk_quant_gran,
-                                               std::string pv_accum_dtype,
-                                               int tensor_layout,
-                                               bool is_causal,
-                                               bool smooth_k,
-                                               bool smooth_v,
-                                               bool return_lse)
-{
-  int _is_causal = int(is_causal);
-  int _qk_quant_gran = (qk_quant_gran == std::string("per_thread")) ? 3 : 2;
-  int _return_lse = int(return_lse);
-
-  PD_CHECK(q.shape()[3] == 64 || q.shape()[3] == 128, "head_dim must be either 64 or 128");
-  PD_CHECK(q.strides()[3] == 1 && k.strides()[3] == 1 && v.strides()[3] == 1, "Last dim of qkv must be contiguous.");
-
-  int seq_dim = (tensor_layout == 0) ? 1 : 2;
-
-  // quant q, k -> q_int8, k_int8
-  constexpr int BLKQ = 64;
-  int WARPQ = 16;
-  constexpr int BLKK = 128;
-  std::vector<paddle::Tensor>&& quant_qk_results = per_warp_int8_cuda(q, k, km, BLKQ, WARPQ, BLKK, tensor_layout); // q_int8, q_scale, k_int8, k_scale
-
-  int v_seq_len = (tensor_layout == 0) ? v.shape()[1] : v.shape()[2];
-  PD_CHECK(v_seq_len % 128 == 0, "v_seq_len must be multiple of 128, do padding before calling this op.");
-
-  paddle::Tensor o = paddle::empty(v.shape(), v.dtype(), paddle::GPUPlace());
-
-  std::vector<paddle::Tensor>&& quant_vfp8_results = per_channel_fp8(v, tensor_layout, 448.0, false);
-
-  qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm90_fwd(quant_qk_results[0], quant_qk_results[2], quant_vfp8_results[0], o, quant_qk_results[1], quant_qk_results[3], quant_vfp8_results[1], tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse);
-
-  return {o};
-}
-
-std::vector<std::vector<int64_t>> sage_attention_InferShape(
-  const std::vector<int64_t> query_shape, 
-  const std::vector<int64_t> key_shape, 
-  const std::vector<int64_t> value_shape,
-  const std::vector<int64_t> km_shape,
-  const paddle::optional<std::vector<int64_t>>& vm_shape) {
-    return {value_shape};
-}
-
-std::vector<paddle::DataType> sage_attention_InferDtype(
-  const paddle::DataType A_dtype,
-  const paddle::DataType B_dtype,
-  const paddle::DataType C_dtype,
-  const paddle::DataType D_dtype,
-  const paddle::optional<paddle::DataType>& E_dtype) {
-  return {C_dtype};
-}
-
-PD_BUILD_OP(sage_attention)
-    .Inputs({"q", "k", "v", "km", paddle::Optional("vm")})
-    .Outputs({"o"})
-    .Attrs({"sm_scale: float",
-            "qk_quant_gran: std::string",
-            "pv_accum_dtype: std::string",
-            "tensor_layout: int",
-            "is_causal: bool",
-            "smooth_k: bool",
-            "smooth_v: bool",
-            "return_lse: bool"})
-    .SetKernelFn(PD_KERNEL(sage_attention_fwd))
-    .SetInferShapeFn(PD_INFER_SHAPE(sage_attention_InferShape))
-    .SetInferDtypeFn(PD_INFER_DTYPE(sage_attention_InferDtype));
