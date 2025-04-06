@@ -2,9 +2,9 @@
 
 #include "paddle/extension.h"
 
-// #include "sageattn.h"
+// #include sage attention headers
 #include "sageattn_utils.cuh"
-#include "sageattn_fused.cuh"
+#include "sageattn_fused_varlen.cuh"
 
 #define PACK_SIZE_QK 16 // as if it is int8
 #define PACK_SIZE_V 16  // fp8

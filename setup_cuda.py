@@ -144,6 +144,7 @@ print("=============================================")
 
 source_files = [
     'csrc/sageattn_fused.cu',
+    'csrc/sageattn_fused_varlen.cu'
 ]
 
 for capability in compute_capabilities:
