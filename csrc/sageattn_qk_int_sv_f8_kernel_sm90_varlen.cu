@@ -213,12 +213,9 @@ __global__ void qk_int8_sv_f8_attn_varlen_kernel(const __grid_constant__ CUtenso
 
     uint32_t RS_f8[num_tiles_q][num_tiles_pv_inner][4];
     RS_32_to_8<num_tiles_q, num_tiles_k>(RS_f32, RS_f8);
-    if (threadIdx.x == 0)
-      printf("8881\n");
+
     // wait for V
     wait(&barrier_V, p);
-
-    if (threadIdx.x == 0)  printf("999\n");
 
     float RO_temp[num_tiles_q][num_tiles_v][8];
     wgmma::warpgroup_arrive();
@@ -258,7 +255,7 @@ __global__ void qk_int8_sv_f8_attn_varlen_kernel(const __grid_constant__ CUtenso
       load_async_3D(sV, &tensorMapV, &barrier_V, iter * CTA_K + cu_seqlen[batch_id], 0, kv_head_id);
     }
   }
-  if (threadIdx.x == 0) printf("000\n");
+
   { 
     p ^= 1;
 
@@ -352,8 +349,6 @@ __global__ void qk_int8_sv_f8_attn_varlen_kernel(const __grid_constant__ CUtenso
     // wait for V
     wait(&barrier_V, p);
 
-    if (threadIdx.x == 0) printf("111\n");
-
     float RO_temp[num_tiles_q][num_tiles_v][8];
     wgmma::warpgroup_arrive();
 #pragma unroll
@@ -411,8 +406,6 @@ __global__ void qk_int8_sv_f8_attn_varlen_kernel(const __grid_constant__ CUtenso
       }
     }
   }
-
-  if (threadIdx.x == 0) printf("222\n");
 
   // re-write the output idx
   DTypeOut *O_lane_ptr = O + cu_seqlen[batch_id] * stride_seq_o + head_id * stride_h_o + (bx * CTA_Q + warp_idx * 16 + (lane_id / 4)) * stride_seq_o + (lane_id % 4) * 2 ;
@@ -579,8 +572,6 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_s
           CUtensorMap tma_map_Q = create_tensor_map_3D<CTA_Q, HEAD_DIM>(reinterpret_cast<int8_t*>(query.data()), query.shape()[0], num_qo_heads, HEAD_DIM, stride_seq_q, stride_h_q);
           CUtensorMap tma_map_K = create_tensor_map_3D<CTA_K, HEAD_DIM>(reinterpret_cast<int8_t*>(key.data()), key.shape()[0], num_kv_heads, HEAD_DIM, stride_seq_k, stride_h_k);
           CUtensorMap tma_map_V = create_tensor_map_3D<HEAD_DIM, CTA_K>(reinterpret_cast<int8_t*>(value.data()), HEAD_DIM, num_kv_heads, value.shape()[2], stride_d_v, stride_h_v);
-
-          printf("6666\n");
 
           auto* kernel = qk_int8_sv_f8_attn_varlen_kernel<CTA_Q, CTA_K, NUM_THREADS, HEAD_DIM,  static_cast<QuantGranularity>(QK_QUANT_GRAN), static_cast<QuantGranularity>(QK_QUANT_GRAN), DTypeOut, mask_mode, true>;
           size_t sMemSize = CTA_Q * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t);
