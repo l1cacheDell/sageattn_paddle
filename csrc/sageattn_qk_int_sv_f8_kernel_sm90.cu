@@ -672,7 +672,7 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_s
     stride_seq_k = key.strides()[1];
     stride_h_k = key.strides()[2];
     stride_h_v = value.strides()[2];
-    stride_d_v = value.strides()[1];
+    stride_d_v = value.strides()[1];  // [b, head_dim, num_head, seqlen]
     stride_seq_o = output.strides()[1];
     stride_h_o = output.strides()[2];
 
