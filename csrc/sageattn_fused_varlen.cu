@@ -309,9 +309,17 @@ __global__ void MeanScaleVarlenKernel(T *__restrict__ input,  // [head_dim, num_
   uint32_t num_iters = fp8_padded_num_tokens / gmem_stride + ((fp8_padded_num_tokens % gmem_stride) > thread_id * pack_size);
 
   // T *input_ptr_base = input + batch_id * stride_bz_input + head_id * stride_h_input + d_id * stride_d_input + thread_id * pack_size;
-  T *input_ptr_base = input + padded_cu_seqlen[batch_id] + head_id * stride_h_input + d_id * stride_d_input + thread_id * pack_size;
+  T *input_ptr_base = input + 
+                      padded_cu_seqlen[batch_id] + 
+                      head_id * stride_h_input + 
+                      d_id * stride_d_input + 
+                      thread_id * pack_size;
   // int8_t *output_ptr_base = output + batch_id * stride_bz_output + head_id * stride_h_output + d_id * stride_d_output + thread_id * pack_size;
-  int8_t *output_ptr_base = output + padded_cu_seqlen[batch_id] + head_id * stride_h_output + d_id * stride_d_output + thread_id * pack_size;
+  int8_t *output_ptr_base = output + 
+                            padded_cu_seqlen[batch_id] + 
+                            head_id * stride_h_output + 
+                            d_id * stride_d_output + 
+                            thread_id * pack_size;
 
   T x_val[8];
   float x_val_float[8];
@@ -609,7 +617,7 @@ void transpose_pad_permute_varlen_cuda_fwd(
 // smooth v
 void scale_fuse_quant_varlen_cuda_fwd(
                 paddle::Tensor& input,  // transpose_permuted_padded_v. [head_dim, num_head, total_padded_seqlen]
-                paddle::Tensor& output, // [head_dim, num_head, total_padded_seqlen]
+                paddle::Tensor& output, //                              [head_dim, num_head, total_padded_seqlen]
                 paddle::Tensor& scale,  // [b, num_head, head_dim]
                 paddle::Tensor& padded_cu_seqlen,
                 int max_seqlen_v, // unpadded max seqlen
@@ -620,7 +628,6 @@ void scale_fuse_quant_varlen_cuda_fwd(
   CHECK_CUDA(output);
   CHECK_CUDA(scale);
 
-  // CHECK_DTYPE(output, torch::kInt8);
   CHECK_DTYPE(scale, paddle::DataType::FLOAT32);
 
   CHECK_CONTIGUOUS(input);

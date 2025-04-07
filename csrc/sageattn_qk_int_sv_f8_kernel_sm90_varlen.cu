@@ -131,7 +131,7 @@ __global__ void qk_int8_sv_f8_attn_varlen_kernel(const __grid_constant__ CUtenso
     // load_async_4D(sV, &tensorMapV, &barrier_V, 0, 0, kv_head_id, batch_id);
     load_async_3D(sQ, &tensorMapQ, &barrier_Q, 0, head_id, bx * CTA_Q + cu_seqlen[batch_id]);   // now shape: [total_seqlen, num_head, head_dim]
     load_async_3D(sK, &tensorMapK, &barrier_K, 0, kv_head_id, 0);
-    load_async_3D(sQ, &tensorMapQ, &barrier_Q, 0, kv_head_id, 0);
+    load_async_3D(sV, &tensorMapV, &barrier_V, 0, kv_head_id, 0);
   }
 
   float q_scale = Q_scale[q_scale_idx];
@@ -213,9 +213,12 @@ __global__ void qk_int8_sv_f8_attn_varlen_kernel(const __grid_constant__ CUtenso
 
     uint32_t RS_f8[num_tiles_q][num_tiles_pv_inner][4];
     RS_32_to_8<num_tiles_q, num_tiles_k>(RS_f32, RS_f8);
-
+    if (threadIdx.x == 0)
+      printf("8881\n");
     // wait for V
     wait(&barrier_V, p);
+
+    if (threadIdx.x == 0)  printf("999\n");
 
     float RO_temp[num_tiles_q][num_tiles_v][8];
     wgmma::warpgroup_arrive();
@@ -255,7 +258,7 @@ __global__ void qk_int8_sv_f8_attn_varlen_kernel(const __grid_constant__ CUtenso
       load_async_3D(sV, &tensorMapV, &barrier_V, iter * CTA_K + cu_seqlen[batch_id], 0, kv_head_id);
     }
   }
-
+  if (threadIdx.x == 0) printf("000\n");
   { 
     p ^= 1;
 
@@ -349,6 +352,8 @@ __global__ void qk_int8_sv_f8_attn_varlen_kernel(const __grid_constant__ CUtenso
     // wait for V
     wait(&barrier_V, p);
 
+    if (threadIdx.x == 0) printf("111\n");
+
     float RO_temp[num_tiles_q][num_tiles_v][8];
     wgmma::warpgroup_arrive();
 #pragma unroll
@@ -406,6 +411,8 @@ __global__ void qk_int8_sv_f8_attn_varlen_kernel(const __grid_constant__ CUtenso
       }
     }
   }
+
+  if (threadIdx.x == 0) printf("222\n");
 
   // re-write the output idx
   DTypeOut *O_lane_ptr = O + cu_seqlen[batch_id] * stride_seq_o + head_id * stride_h_o + (bx * CTA_Q + warp_idx * 16 + (lane_id / 4)) * stride_seq_o + (lane_id % 4) * 2 ;
@@ -573,6 +580,8 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_s
           CUtensorMap tma_map_K = create_tensor_map_3D<CTA_K, HEAD_DIM>(reinterpret_cast<int8_t*>(key.data()), key.shape()[0], num_kv_heads, HEAD_DIM, stride_seq_k, stride_h_k);
           CUtensorMap tma_map_V = create_tensor_map_3D<HEAD_DIM, CTA_K>(reinterpret_cast<int8_t*>(value.data()), HEAD_DIM, num_kv_heads, value.shape()[2], stride_d_v, stride_h_v);
 
+          printf("6666\n");
+
           auto* kernel = qk_int8_sv_f8_attn_varlen_kernel<CTA_Q, CTA_K, NUM_THREADS, HEAD_DIM,  static_cast<QuantGranularity>(QK_QUANT_GRAN), static_cast<QuantGranularity>(QK_QUANT_GRAN), DTypeOut, mask_mode, true>;
           size_t sMemSize = CTA_Q * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t);
           cudaFuncSetAttribute(
@@ -647,21 +656,21 @@ std::vector<paddle::Tensor> sage_attention_varlen_fwd(paddle::Tensor& q,        
       max_seqlen_v, 
       tensor_layout, 448.0, false);
 
-  // qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm90_varlen_fwd(quant_qk_results[0], // q
-  //   quant_qk_results[2],    // k
-  //   quant_vfp8_results[0],  // v
-  //   o,                      // o
-  //   quant_qk_results[1],    // q_scale
-  //   quant_qk_results[3],    // k_scale
-  //   quant_vfp8_results[1],  // v_scale
-  //   cu_seqlen_q, 
-  //   max_seqlen_q,
-  //   max_seqlen_k,
-  //   tensor_layout, 
-  //   _is_causal, 
-  //   _qk_quant_gran, 
-  //   sm_scale, 
-  //   _return_lse);
+  qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm90_varlen_fwd(quant_qk_results[0], // q
+    quant_qk_results[2],    // k
+    quant_vfp8_results[0],  // v
+    o,                      // o
+    quant_qk_results[1],    // q_scale
+    quant_qk_results[3],    // k_scale
+    quant_vfp8_results[1],  // v_scale
+    cu_seqlen_q, 
+    max_seqlen_q,
+    max_seqlen_k,
+    tensor_layout, 
+    _is_causal, 
+    _qk_quant_gran, 
+    sm_scale, 
+    _return_lse);
 
   return {o, quant_vfp8_results[0], quant_vfp8_results[3]};
 }
