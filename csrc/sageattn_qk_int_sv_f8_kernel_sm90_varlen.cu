@@ -35,7 +35,7 @@ __global__ void qk_int8_sv_f8_attn_varlen_kernel(const __grid_constant__ CUtenso
   // return this kernel, in block-level
   const uint32_t bz_seqlen = cu_seqlen[batch_id + 1] - cu_seqlen[batch_id];
   const uint32_t thread_base_token = bx * CTA_Q;
-  if (thread_base_token > bz_seqlen) return;
+  if (thread_base_token >= bz_seqlen) return;
 
   sm_scale *= math::log2e;
 
