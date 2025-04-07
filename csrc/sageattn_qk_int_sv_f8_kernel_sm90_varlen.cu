@@ -129,8 +129,8 @@ __global__ void qk_int8_sv_f8_attn_varlen_kernel(const __grid_constant__ CUtenso
     //                                            |  |             |         |
     // load_async_4D(sQ, &tensorMapQ, &barrier_Q, 0, bx * CTA_Q, head_id, batch_id); // original input tensor map: [bsz, num_head, seqlen. head_dim]
     // load_async_4D(sK, &tensorMapK, &barrier_K, 0, 0, kv_head_id, batch_id);
-    load_async_3D(sQ, &tensorMapQ, &barrier_Q, 0, head_id, bx * CTA_Q + cu_seqlen[batch_id]);   // now shape: [total_seqlen, num_head, head_dim]
-    load_async_3D(sK, &tensorMapK, &barrier_K, 0, kv_head_id, cu_seqlen[batch_id]);
+    load_async_3D(sQ, &tensorMapQ, &barrier_Q, 0, bx * CTA_Q + cu_seqlen[batch_id], head_id);   // now shape: [num_head, total_seqlen, head_dim]
+    load_async_3D(sK, &tensorMapK, &barrier_K, 0, cu_seqlen[batch_id], kv_head_id);
 
     //                                       seqlen  head_dim num_head    bsz
     //                                            |  |         |         |
@@ -182,7 +182,7 @@ __global__ void qk_int8_sv_f8_attn_varlen_kernel(const __grid_constant__ CUtenso
     {
       expect_bytes<(CTA_K * head_dim) * sizeof(int8_t)>(&barrier_K);
       // load_async_4D(sK, &tensorMapK, &barrier_K, 0, iter * CTA_K, kv_head_id, batch_id);
-      load_async_3D(sK, &tensorMapK, &barrier_K, 0, kv_head_id, iter * CTA_K + cu_seqlen[batch_id]);
+      load_async_3D(sK, &tensorMapK, &barrier_K, 0, iter * CTA_K + cu_seqlen[batch_id], kv_head_id);
     }
 
     // convert RS to float
@@ -255,7 +255,7 @@ __global__ void qk_int8_sv_f8_attn_varlen_kernel(const __grid_constant__ CUtenso
     if (threadIdx.x == 0)
     {
       expect_bytes<(CTA_K * head_dim) * sizeof(int8_t)>(&barrier_V);
-      // load_async_4D(sV, &tensorMapV, &barrier_V, iter * CTA_K, 0, kv_head_id, batch_id);  // original v shape: [headdim, num_head, seqlen]
+      // load_async_4D(sV, &tensorMapV, &barrier_V, iter * CTA_K, 0, kv_head_id, batch_id);  // original v shape: [b, num_head, headdim, seqlen, ]
       load_async_3D(sV, &tensorMapV, &barrier_V, iter * CTA_K + cu_seqlen[batch_id], 0, kv_head_id);
     }
   }
@@ -574,9 +574,13 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_s
           CHECK_SHAPE(value_scale, batch_size, num_kv_heads, head_dim);
 
           // TODO: we need to change here
-          CUtensorMap tma_map_Q = create_tensor_map_3D<CTA_Q, HEAD_DIM>(reinterpret_cast<int8_t*>(query.data()), query.shape()[0], num_qo_heads, HEAD_DIM, stride_seq_q, stride_h_q);
-          CUtensorMap tma_map_K = create_tensor_map_3D<CTA_K, HEAD_DIM>(reinterpret_cast<int8_t*>(key.data()), key.shape()[0], num_kv_heads, HEAD_DIM, stride_seq_k, stride_h_k);
-          CUtensorMap tma_map_V = create_tensor_map_3D<HEAD_DIM, CTA_K>(reinterpret_cast<int8_t*>(value.data()), num_kv_heads, HEAD_DIM, value.shape()[2], stride_h_v, stride_d_v);
+          CUtensorMap tma_map_Q = create_tensor_map_3D<CTA_Q, HEAD_DIM>(reinterpret_cast<int8_t*>(query.data()), num_qo_heads, query.shape()[0], HEAD_DIM, 
+            stride_h_q, stride_seq_q);
+          CUtensorMap tma_map_K = create_tensor_map_3D<CTA_K, HEAD_DIM>(reinterpret_cast<int8_t*>(key.data()), num_kv_heads, key.shape()[0], HEAD_DIM, 
+            stride_h_k, stride_seq_k);
+          CUtensorMap tma_map_V = create_tensor_map_3D<HEAD_DIM, CTA_K>(reinterpret_cast<int8_t*>(value.data()), num_kv_heads, HEAD_DIM, value.shape()[2], 
+            stride_h_v, stride_d_v);
+          // stride_d_v, stride_h_v);
 
           auto* kernel = qk_int8_sv_f8_attn_varlen_kernel<CTA_Q, CTA_K, NUM_THREADS, HEAD_DIM,  static_cast<QuantGranularity>(QK_QUANT_GRAN), static_cast<QuantGranularity>(QK_QUANT_GRAN), DTypeOut, mask_mode, true>;
           size_t sMemSize = CTA_Q * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t);

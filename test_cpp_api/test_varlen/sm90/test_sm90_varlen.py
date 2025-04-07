@@ -210,3 +210,17 @@ print(f"seg_2 sim: {sim}, l1: {l1}, max_diff: {mdiff}")
 
 sim, l1, mdiff = precision_cmp_paddle(o1_seg_3.unsqueeze(0), o_set_3)
 print(f"seg_3 sim: {sim}, l1: {l1}, max_diff: {mdiff}")
+
+# 沿着num_head维度切分一下
+sim, l1, max_diff = precision_cmp_paddle(o1[:, :8, :], o2[:, :8, :])
+print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}") # 0.593
+sim, l1, max_diff = precision_cmp_paddle(o1[:, 8:16, :], o2[:, 8:16, :])
+print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}") # 0.637
+sim, l1, max_diff = precision_cmp_paddle(o1[:, 16:, :], o2[:, 16:, :])
+print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}") # 0.693
+print()
+
+sim, l1, max_diff = precision_cmp_paddle(o1[:, 16:18, :], o2[:, 16:18, :])
+print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}") # 0.693
+sim, l1, max_diff = precision_cmp_paddle(o1[:, 22:, :], o2[:, 22:, :])
+print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}") # 0.693
