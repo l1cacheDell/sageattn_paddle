@@ -154,7 +154,7 @@ for capability in compute_capabilities:
     if capability[0] == '9':
         source_files += [
             'csrc/sageattn_qk_int_sv_f8_kernel_sm90.cu',
-            # 'csrc/sageattn_qk_int_sv_f8_kernel_sm90_varlen.cu',
+            'csrc/sageattn_qk_int_sv_f8_kernel_sm90_varlen.cu',
             'csrc/sageattn_qk_int_sv_f8_dsk_kernel_sm90.cu',
         ]
     elif capability[0] == "8" and capability[2] == "0":

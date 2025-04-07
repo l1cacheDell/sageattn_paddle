@@ -16,8 +16,55 @@ def precision_cmp_paddle(t1: paddle.Tensor, t2: paddle.Tensor):
     
     return sim, l1, max_diff
 
+def pad_sequences_to_aligned_chunks(v, cu_seqlens_v, align_size=128):
+    """
+    将变长序列填充到指定对齐大小
+    
+    参数:
+        v: 输入张量，形状为[seq_len, num_heads, head_dim]
+        cu_seqlens_v: 累积序列长度，如[0, 246, 394, seq_len]
+        align_size: 对齐大小(默认为128)
+    
+    返回:
+        填充后的张量
+        新的cu_seqlens_v(包含填充后的位置)
+    """
+    # 1. 计算每个序列的实际长度和需要填充的长度
+    batch_size = len(cu_seqlens_v) - 1
+    seq_lengths = cu_seqlens_v[1:] - cu_seqlens_v[:-1]
+    
+    # 2. 计算每个序列需要填充到的长度
+    padded_lengths = ((seq_lengths + align_size - 1) // align_size) * align_size
+    total_padded_length = paddle.sum(padded_lengths).item()
+    
+    # 3. 创建结果张量(初始化为0)
+    padded_v = paddle.zeros(
+        [total_padded_length, v.shape[1], v.shape[2]],
+        dtype=v.dtype
+    )
+    
+    # 4. 计算新的cu_seqlens_v
+    new_cu_seqlens = paddle.zeros_like(cu_seqlens_v)
+    new_cu_seqlens[0] = 0
+    for i in range(1, batch_size + 1):
+        new_cu_seqlens[i] = new_cu_seqlens[i-1] + padded_lengths[i-1]
+    
+    # 5. 将原始数据复制到填充后的张量中
+    for i in range(batch_size):
+        start = cu_seqlens_v[i].item()
+        end = cu_seqlens_v[i+1].item()
+        chunk_length = end - start
+        
+        # 计算填充后的起始位置
+        padded_start = new_cu_seqlens[i].item()
+        
+        # 复制数据
+        padded_v[padded_start:padded_start+chunk_length] = v[start:end]
+    
+    return padded_v, new_cu_seqlens
+
 bsz = 2
-seq_len = 1025
+seq_len = 1408
 num_heads = 24
 head_dim = 128
 
@@ -29,21 +76,29 @@ q = paddle.randn(shape=(seq_len, num_heads, head_dim), dtype=paddle.float16)
 k = paddle.randn(shape=(seq_len, num_heads, head_dim), dtype=paddle.float16)
 v = paddle.randn(shape=(seq_len, num_heads, head_dim), dtype=paddle.float16)
 
-cu_seqlens = paddle.to_tensor([0, 246, 394, seq_len], dtype=paddle.int32)
+cu_seqlens = paddle.to_tensor([0, 256, 384, seq_len], dtype=paddle.int32)
 
 segment_lengths = paddle.concat([cu_seqlens[:1], cu_seqlens[1:] - cu_seqlens[:-1]])[1:]
 segment_ids = paddle.concat([paddle.full([length], i, dtype='int32') for i, length in enumerate(segment_lengths)])
-max_seqlen = seq_len - 394
+max_seqlen = seq_len - 384
 
-# sm80 kernel
-o1, q_int8, k_int8, km_out = sageattn_custom_ops.sage_attention_varlen(q, 
+cu_seqlens_v = paddle.to_tensor([0, 256, 384, seq_len], dtype=paddle.int32)
+
+padded_v, new_cu_seqlen_v = pad_sequences_to_aligned_chunks(v, cu_seqlens_v, 128)
+
+# sm90 kernel
+o1, vfp8_fused, v_transposed_fused = sageattn_custom_ops.sage_attention_varlen(q, 
                                                 k, 
-                                                v, 
+                                                padded_v, 
                                                 cu_seqlens,
+                                                cu_seqlens_v,
+                                                new_cu_seqlen_v,
                                                 segment_ids,
                                                 None,
                                                 max_seqlen,
                                                 max_seqlen,
+                                                max_seqlen,
+                                                seq_len,
                                                 head_dim**-0.5,
                                                 "per_warp",
                                                 "fp16",
@@ -53,10 +108,12 @@ o1, q_int8, k_int8, km_out = sageattn_custom_ops.sage_attention_varlen(q,
                                                 smooth_v=False, 
                                                 return_lse=return_lse)
 
+paddle.device.synchronize()
+
 # =======================================================================
-q1, q2, q3 = paddle.split(q, [246 - 0, 394 - 246, seq_len - 394], axis=0)
-k1, k2, k3 = paddle.split(k, [246 - 0, 394 - 246, seq_len - 394], axis=0)
-v1, v2, v3 = paddle.split(v, [246 - 0, 394 - 246, seq_len - 394], axis=0)
+q1, q2, q3 = paddle.split(q, [256 - 0, 384 - 256, seq_len - 384], axis=0)
+k1, k2, k3 = paddle.split(k, [256 - 0, 384 - 256, seq_len - 384], axis=0)
+v1, v2, v3 = paddle.split(v, [256 - 0, 384 - 256, seq_len - 384], axis=0)
 
 q1 = paddle.unsqueeze(q1, axis=0)
 k1 = paddle.unsqueeze(k1, axis=0)
@@ -79,81 +136,99 @@ km2 = km2.squeeze(1) if tensor_layout == "NHD" else km2.squeeze(2)
 km3 = paddle.mean(k3, axis=1, keepdim=True)
 km3 = km3.squeeze(1) if tensor_layout == "NHD" else km3.squeeze(2)
 
-o_set_1, q_int8_1, k_int8_1 = sageattn_custom_ops.sage_attention(q1, k1, v1, km1, None, head_dim**-0.5, "per_warp", "fp32", tensor_layout=0, is_causal=is_causal, smooth_k=True, smooth_v=False, return_lse=return_lse)
-o_set_2, q_int8_2, k_int8_2 = sageattn_custom_ops.sage_attention(q2, k2, v2, km2, None, head_dim**-0.5, "per_warp", "fp32", tensor_layout=0, is_causal=is_causal, smooth_k=True, smooth_v=False, return_lse=return_lse)
-o_set_3, q_int8_3, k_int8_3 = sageattn_custom_ops.sage_attention(q3, k3, v3, km3, None, head_dim**-0.5, "per_warp", "fp32", tensor_layout=0, is_causal=is_causal, smooth_k=True, smooth_v=False, return_lse=return_lse)
+o_set_1, vfp8_1, v_tm_1 = sageattn_custom_ops.sage_attention(q1, k1, v1, km1, None, head_dim**-0.5, "per_warp", "fp32", tensor_layout=0, is_causal=is_causal, smooth_k=True, smooth_v=False, return_lse=return_lse)
+o_set_2, vfp8_2, v_tm_2 = sageattn_custom_ops.sage_attention(q2, k2, v2, km2, None, head_dim**-0.5, "per_warp", "fp32", tensor_layout=0, is_causal=is_causal, smooth_k=True, smooth_v=False, return_lse=return_lse)
+o_set_3, vfp8_3, v_tm_3 = sageattn_custom_ops.sage_attention(q3, k3, v3, km3, None, head_dim**-0.5, "per_warp", "fp32", tensor_layout=0, is_causal=is_causal, smooth_k=True, smooth_v=False, return_lse=return_lse)
 
 km_total = paddle.concat([km1, km2, km3], axis=0)
-print("max km: ", paddle.max(km_out - km_total))
+# print(vfp8_1.shape)
+# print(vfp8_2.shape)
+# print(vfp8_3.shape)
 
-# o_set_1 = paddle.nn.functional.scaled_dot_product_attention(q1, k1, v1, None, 0.0, True, False)
-# o_set_2 = paddle.nn.functional.scaled_dot_product_attention(q2, k2, v2, None, 0.0, True, False)
-# o_set_3 = paddle.nn.functional.scaled_dot_product_attention(q3, k3, v3, None, 0.0, True, False)
+vfp8_varlen_1, vfp8_varlen_2, vfp8_varlen_3 = paddle.split(vfp8_fused.astype(paddle.float32), [256 - 0, 384 - 256, seq_len - 384], axis=-1)
+sim, l1, md = precision_cmp_paddle(vfp8_1, vfp8_varlen_1)
+print(f"sim: {sim}, l1: {l1}, max_diff: {md}")
+sim, l1, md = precision_cmp_paddle(vfp8_2, vfp8_varlen_2)
+print(f"sim: {sim}, l1: {l1}, max_diff: {md}")
+sim, l1, md = precision_cmp_paddle(vfp8_3, vfp8_varlen_3)
+print(f"sim: {sim}, l1: {l1}, max_diff: {md}")
 
-o2 = paddle.concat([o_set_1, o_set_2, o_set_3], axis=1).squeeze(0)
+vfp8_varlen_1, vfp8_varlen_2, vfp8_varlen_3 = paddle.split(v_transposed_fused.astype(paddle.float32), [256 - 0, 384 - 256, seq_len - 384], axis=-1)
+sim, l1, md = precision_cmp_paddle(v_tm_1, vfp8_varlen_1)
+print(f"sim: {sim}, l1: {l1}, max_diff: {md}")
+sim, l1, md = precision_cmp_paddle(v_tm_2, vfp8_varlen_2)
+print(f"sim: {sim}, l1: {l1}, max_diff: {md}")
+sim, l1, md = precision_cmp_paddle(v_tm_3, vfp8_varlen_3)
+print(f"sim: {sim}, l1: {l1}, max_diff: {md}")
 
-print(o2.shape)
-print(o1.shape)
-# print(o1)
-# print(q_int8)
+# # o_set_1 = paddle.nn.functional.scaled_dot_product_attention(q1, k1, v1, None, 0.0, True, False)
+# # o_set_2 = paddle.nn.functional.scaled_dot_product_attention(q2, k2, v2, None, 0.0, True, False)
+# # o_set_3 = paddle.nn.functional.scaled_dot_product_attention(q3, k3, v3, None, 0.0, True, False)
 
-# compare quant results
-q_int8_varlen_1, q_int8_varlen_2, q_int8_varlen_3 = paddle.split(q_int8, [246 - 0, 394 - 246, seq_len - 394], axis=0)
-sim_q_int8_1, _, max_diff_q_int8_1 = precision_cmp_paddle(q_int8_1.squeeze(0), q_int8_varlen_1)
-sim_q_int8_2, _, max_diff_q_int8_2 = precision_cmp_paddle(q_int8_2.squeeze(0), q_int8_varlen_2)
-sim_q_int8_3, _, max_diff_q_int8_3 = precision_cmp_paddle(q_int8_3.squeeze(0), q_int8_varlen_3)
-print(f"sim_q_int8_1: {sim_q_int8_1}, max_diff_q_int8_1: {max_diff_q_int8_1}")
-print(f"sim_q_int8_2: {sim_q_int8_2}, max_diff_q_int8_2: {max_diff_q_int8_2}")
-print(f"sim_q_int8_3: {sim_q_int8_3}, max_diff_q_int8_3: {max_diff_q_int8_3}")
+# o2 = paddle.concat([o_set_1, o_set_2, o_set_3], axis=1).squeeze(0)
+
+# print(o2.shape)
+# print(o1.shape)
+# # print(o1)
+# # print(q_int8)
+
+# # compare quant results
+# q_int8_varlen_1, q_int8_varlen_2, q_int8_varlen_3 = paddle.split(q_int8, [256 - 0, 384 - 256, seq_len - 384], axis=0)
+# sim_q_int8_1, _, max_diff_q_int8_1 = precision_cmp_paddle(q_int8_1.squeeze(0), q_int8_varlen_1)
+# sim_q_int8_2, _, max_diff_q_int8_2 = precision_cmp_paddle(q_int8_2.squeeze(0), q_int8_varlen_2)
+# sim_q_int8_3, _, max_diff_q_int8_3 = precision_cmp_paddle(q_int8_3.squeeze(0), q_int8_varlen_3)
+# print(f"sim_q_int8_1: {sim_q_int8_1}, max_diff_q_int8_1: {max_diff_q_int8_1}")
+# print(f"sim_q_int8_2: {sim_q_int8_2}, max_diff_q_int8_2: {max_diff_q_int8_2}")
+# print(f"sim_q_int8_3: {sim_q_int8_3}, max_diff_q_int8_3: {max_diff_q_int8_3}")
 
 
-k_int8_varlen_1, k_int8_varlen_2, k_int8_varlen_3 = paddle.split(k_int8, [246 - 0, 394 - 246, seq_len - 394], axis=0)
-sim_k_int8_1, _, max_diff_k_int8_1 = precision_cmp_paddle(k_int8_1.squeeze(0), k_int8_varlen_1)
-sim_k_int8_2, _, max_diff_k_int8_2 = precision_cmp_paddle(k_int8_2.squeeze(0), k_int8_varlen_2)
-sim_k_int8_3, _, max_diff_k_int8_3 = precision_cmp_paddle(k_int8_3.squeeze(0), k_int8_varlen_3)
+# k_int8_varlen_1, k_int8_varlen_2, k_int8_varlen_3 = paddle.split(k_int8, [256 - 0, 384 - 256, seq_len - 384], axis=0)
+# sim_k_int8_1, _, max_diff_k_int8_1 = precision_cmp_paddle(k_int8_1.squeeze(0), k_int8_varlen_1)
+# sim_k_int8_2, _, max_diff_k_int8_2 = precision_cmp_paddle(k_int8_2.squeeze(0), k_int8_varlen_2)
+# sim_k_int8_3, _, max_diff_k_int8_3 = precision_cmp_paddle(k_int8_3.squeeze(0), k_int8_varlen_3)
 
-print(f"sim_k_int8_1: {sim_k_int8_1}, max_diff_k_int8_1: {max_diff_k_int8_1}")
-print(f"sim_k_int8_2: {sim_k_int8_2}, max_diff_k_int8_2: {max_diff_k_int8_2}")
-print(f"sim_k_int8_3: {sim_k_int8_3}, max_diff_k_int8_3: {max_diff_k_int8_3}")
+# print(f"sim_k_int8_1: {sim_k_int8_1}, max_diff_k_int8_1: {max_diff_k_int8_1}")
+# print(f"sim_k_int8_2: {sim_k_int8_2}, max_diff_k_int8_2: {max_diff_k_int8_2}")
+# print(f"sim_k_int8_3: {sim_k_int8_3}, max_diff_k_int8_3: {max_diff_k_int8_3}")
 
-# print(k_int8_1.squeeze(0).place, k_int8_varlen_1.place)
-diff_mat = k_int8_1.squeeze(0).astype("int32") - k_int8_varlen_1.astype(paddle.int32)
-# idx = paddle.argmax(diff_mat).item()
-# print(f"The seq: {idx // (head_dim * num_heads)} The Head: {(idx % (head_dim * num_heads)) // head_dim}, The dim: {idx % head_dim}")
-non_zero_indices = paddle.nonzero(diff_mat != 0)  # 形状为 [N, rank]，N 是非零元素数量
-print(non_zero_indices.shape)
-# np.savetxt("mat1.txt", non_zero_indices.cpu().numpy(), fmt='%.1f')
-# np.savetxt("mat1_val.txt", diff_mat[non_zero_indices].reshape([-1,]).cpu().numpy(), fmt='%.1f')
+# # print(k_int8_1.squeeze(0).place, k_int8_varlen_1.place)
+# diff_mat = k_int8_1.squeeze(0).astype("int32") - k_int8_varlen_1.astype(paddle.int32)
+# # idx = paddle.argmax(diff_mat).item()
+# # print(f"The seq: {idx // (head_dim * num_heads)} The Head: {(idx % (head_dim * num_heads)) // head_dim}, The dim: {idx % head_dim}")
+# non_zero_indices = paddle.nonzero(diff_mat != 0)  # 形状为 [N, rank]，N 是非零元素数量
+# print(non_zero_indices.shape)
+# # np.savetxt("mat1.txt", non_zero_indices.cpu().numpy(), fmt='%.1f')
+# # np.savetxt("mat1_val.txt", diff_mat[non_zero_indices].reshape([-1,]).cpu().numpy(), fmt='%.1f')
 
-diff_mat2 = k_int8_2.squeeze(0).astype("int32") - k_int8_varlen_2.astype(paddle.int32)
-# idx = paddle.argmax(diff_mat2).item()
-# print(f"The seq: {idx // (head_dim * num_heads)} The Head: {(idx % (head_dim * num_heads)) // head_dim}, The dim: {idx % head_dim}")
-non_zero_indices = paddle.nonzero(diff_mat2 != 0)  # 形状为 [N, rank]，N 是非零元素数量
-print(non_zero_indices.shape)
-# np.savetxt("mat2.txt", non_zero_indices.cpu().numpy(), fmt='%.1f')
+# diff_mat2 = k_int8_2.squeeze(0).astype("int32") - k_int8_varlen_2.astype(paddle.int32)
+# # idx = paddle.argmax(diff_mat2).item()
+# # print(f"The seq: {idx // (head_dim * num_heads)} The Head: {(idx % (head_dim * num_heads)) // head_dim}, The dim: {idx % head_dim}")
+# non_zero_indices = paddle.nonzero(diff_mat2 != 0)  # 形状为 [N, rank]，N 是非零元素数量
+# print(non_zero_indices.shape)
+# # np.savetxt("mat2.txt", non_zero_indices.cpu().numpy(), fmt='%.1f')
 
-diff_mat3 = k_int8_3.squeeze(0).astype("int32") - k_int8_varlen_3.astype(paddle.int32)
-# idx = paddle.argmax(diff_mat3).item()
-# print(f"The seq: {idx // (head_dim * num_heads)} The Head: {(idx % (head_dim * num_heads)) // head_dim}, The dim: {idx % head_dim}")
-non_zero_indices = paddle.nonzero(diff_mat3 != 0)  # 形状为 [N, rank]，N 是非零元素数量
-print(non_zero_indices.shape)
-# np.savetxt("mat3.txt", non_zero_indices.cpu().numpy(), fmt='%.1f')
-# print(k_int8_1.squeeze(0).astype("int32") - k_int8_varlen_1.astype(paddle.int32))
+# diff_mat3 = k_int8_3.squeeze(0).astype("int32") - k_int8_varlen_3.astype(paddle.int32)
+# # idx = paddle.argmax(diff_mat3).item()
+# # print(f"The seq: {idx // (head_dim * num_heads)} The Head: {(idx % (head_dim * num_heads)) // head_dim}, The dim: {idx % head_dim}")
+# non_zero_indices = paddle.nonzero(diff_mat3 != 0)  # 形状为 [N, rank]，N 是非零元素数量
+# print(non_zero_indices.shape)
+# # np.savetxt("mat3.txt", non_zero_indices.cpu().numpy(), fmt='%.1f')
+# # print(k_int8_1.squeeze(0).astype("int32") - k_int8_varlen_1.astype(paddle.int32))
 
-# o2 = paddle.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=is_causal)
+# # o2 = paddle.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=is_causal)
 
-sim, l1, max_diff = precision_cmp_paddle(o1, o2)
-print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}")
+# sim, l1, max_diff = precision_cmp_paddle(o1, o2)
+# print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}")
 
-print("\n=========================================================\n")
+# print("\n=========================================================\n")
 
-# compare three segment each
-o1_seg_1, o1_seg_2, o1_seg_3 = paddle.split(o1, [246 - 0, 394 - 246, seq_len - 394], axis=0)
-sim, l1, mdiff = precision_cmp_paddle(o1_seg_1.unsqueeze(0), o_set_1)
-print(f"seg_1 sim: {sim}, l1: {l1}, max_diff: {mdiff}")
+# # compare three segment each
+# o1_seg_1, o1_seg_2, o1_seg_3 = paddle.split(o1, [256 - 0, 384 - 256, seq_len - 384], axis=0)
+# sim, l1, mdiff = precision_cmp_paddle(o1_seg_1.unsqueeze(0), o_set_1)
+# print(f"seg_1 sim: {sim}, l1: {l1}, max_diff: {mdiff}")
 
-sim, l1, mdiff = precision_cmp_paddle(o1_seg_2.unsqueeze(0), o_set_2)
-print(f"seg_2 sim: {sim}, l1: {l1}, max_diff: {mdiff}")
+# sim, l1, mdiff = precision_cmp_paddle(o1_seg_2.unsqueeze(0), o_set_2)
+# print(f"seg_2 sim: {sim}, l1: {l1}, max_diff: {mdiff}")
 
-sim, l1, mdiff = precision_cmp_paddle(o1_seg_3.unsqueeze(0), o_set_3)
-print(f"seg_3 sim: {sim}, l1: {l1}, max_diff: {mdiff}")
+# sim, l1, mdiff = precision_cmp_paddle(o1_seg_3.unsqueeze(0), o_set_3)
+# print(f"seg_3 sim: {sim}, l1: {l1}, max_diff: {mdiff}")

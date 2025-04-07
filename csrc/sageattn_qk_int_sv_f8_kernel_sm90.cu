@@ -1,4 +1,5 @@
 #include "sageattn_qk_int_sv_f8_kernel_sm90.cuh"
+#include "sageattn_fused.cuh"
 
 //
 // ======= kernel impl =======
@@ -497,7 +498,7 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_attn_inst_buf_sm90_fwd(
     stride_h_q = query.strides()[2];
     stride_seq_k = key.strides()[1];
     stride_h_k = key.strides()[2];
-    stride_h_v = value.strides()[2];
+    stride_h_v = value.strides()[2];  // [bsz, head_dim, num_head, seqlen]
     stride_d_v = value.strides()[1];
     stride_seq_o = output.strides()[1];
     stride_h_o = output.strides()[2];
@@ -808,17 +809,14 @@ std::vector<paddle::Tensor> sage_attention_fwd(paddle::Tensor& q,
   int WARPQ = 16;
   constexpr int BLKK = 128;
   std::vector<paddle::Tensor>&& quant_qk_results = per_warp_int8_cuda(q, k, km, BLKQ, WARPQ, BLKK, tensor_layout); // q_int8, q_scale, k_int8, k_scale
-
   int v_seq_len = (tensor_layout == 0) ? v.shape()[1] : v.shape()[2];
   PD_CHECK(v_seq_len % 128 == 0, "v_seq_len must be multiple of 128, do padding before calling this op.");
 
   paddle::Tensor o = paddle::empty(v.shape(), v.dtype(), paddle::GPUPlace());
 
   std::vector<paddle::Tensor>&& quant_vfp8_results = per_channel_fp8(v, tensor_layout, 448.0, false);
-
   qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm90_fwd(quant_qk_results[0], quant_qk_results[2], quant_vfp8_results[0], o, quant_qk_results[1], quant_qk_results[3], quant_vfp8_results[1], tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse);
-
-  return {o};
+  return {o, quant_vfp8_results[0], quant_vfp8_results[3]};
 }
 
 std::vector<std::vector<int64_t>> sage_attention_InferShape(
@@ -841,7 +839,7 @@ std::vector<paddle::DataType> sage_attention_InferDtype(
 
 PD_BUILD_OP(sage_attention)
     .Inputs({"q", "k", "v", "km", paddle::Optional("vm")})
-    .Outputs({"o"})
+    .Outputs({"o", "out1", "out2"})
     .Attrs({"sm_scale: float",
             "qk_quant_gran: std::string",
             "pv_accum_dtype: std::string",

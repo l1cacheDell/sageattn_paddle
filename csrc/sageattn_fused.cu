@@ -1174,7 +1174,7 @@ std::vector<paddle::Tensor> per_channel_fp8(paddle::Tensor& v,
         scale_fuse_quant_cuda_fwd(v_transposed_permutted, v_fp8, v_scale, kv_len, scale_max, tensor_layout);
     }
 
-    return {v_fp8, v_scale, vm};
+    return {v_fp8, v_scale, vm, v_transposed_permutted};
 }
 
 std::vector<paddle::Tensor> sub_mean(paddle::Tensor& v,

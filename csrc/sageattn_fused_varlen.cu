@@ -244,7 +244,7 @@ __global__ void TransposePadPermuteVarlenKernel(T *__restrict__ input,  // total
 
   // T* output_ptr_base = output + batch_id * stride_bz_output + head_id * stride_h_output + bx * CTA_SIZE + thread_id % num_threads_per_cta * pack_size + thread_id / num_threads_per_cta * stride_d_output;
 
-  T* output_ptr_base = output + stride_seq_input * padded_cu_seqlen[batch_id] + head_id * stride_h_output + bx * CTA_SIZE + thread_id % num_threads_per_cta * pack_size + thread_id / num_threads_per_cta * stride_d_output;
+  T* output_ptr_base = output + padded_cu_seqlen[batch_id] + head_id * stride_h_output + bx * CTA_SIZE + thread_id % num_threads_per_cta * pack_size + thread_id / num_threads_per_cta * stride_d_output;
 
   __shared__ T shared_load[CTA_SIZE][head_dim];
   __shared__ T shared_store[head_dim][CTA_SIZE];
@@ -309,9 +309,9 @@ __global__ void MeanScaleVarlenKernel(T *__restrict__ input,  // [head_dim, num_
   uint32_t num_iters = fp8_padded_num_tokens / gmem_stride + ((fp8_padded_num_tokens % gmem_stride) > thread_id * pack_size);
 
   // T *input_ptr_base = input + batch_id * stride_bz_input + head_id * stride_h_input + d_id * stride_d_input + thread_id * pack_size;
-  T *input_ptr_base = input + padded_cu_seqlen[batch_id] * num_head * head_dim + head_id * stride_h_input + d_id * stride_d_input + thread_id * pack_size;
+  T *input_ptr_base = input + padded_cu_seqlen[batch_id] + head_id * stride_h_input + d_id * stride_d_input + thread_id * pack_size;
   // int8_t *output_ptr_base = output + batch_id * stride_bz_output + head_id * stride_h_output + d_id * stride_d_output + thread_id * pack_size;
-  int8_t *output_ptr_base = output + padded_cu_seqlen[batch_id] * num_head * head_dim + head_id * stride_h_output + d_id * stride_d_output + thread_id * pack_size;
+  int8_t *output_ptr_base = output + padded_cu_seqlen[batch_id] + head_id * stride_h_output + d_id * stride_d_output + thread_id * pack_size;
 
   T x_val[8];
   float x_val_float[8];
@@ -837,5 +837,5 @@ std::vector<paddle::Tensor> per_channel_varlen_fp8(paddle::Tensor& v, // total_s
                                         kv_len, scale_max, tensor_layout);
     }
 
-    return {v_fp8, v_scale, vm};
+    return {v_fp8, v_scale, vm, v_transposed_permutted};
 }
