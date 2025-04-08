@@ -3,6 +3,8 @@
 #include <cuda_bf16.h>
 #include <vector>
 
+#include <cub/cub.cuh>
+
 #include "sageattn_utils.cuh"
 #include "sageattn_fused_varlen.cuh"
 
