@@ -252,14 +252,6 @@ np.savetxt("nan_indices.txt", nan_indices_np, fmt="%d")
 # 打印保存的路径
 print("已保存 nan_indices 到 nan_indices.txt")
 
-print(vfp8_f1[0 , 1 , 0])
-print(v_tm_1.squeeze(0)[0 , 1 , 0])
-
-print(vfp8_f1[0 , 1 , 1])
-print(v_tm_1.squeeze(0)[0 , 1 , 1])
-
-print(vfp8_f1[0 , 1 , 2])
-print(v_tm_1.squeeze(0)[0 , 1 , 2])
 
 # analyze the first seg
 # print("\n================\n")

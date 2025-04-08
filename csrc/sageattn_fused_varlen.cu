@@ -222,7 +222,7 @@ __global__ void TransposePadPermuteVarlenKernel(T *__restrict__ input,  // total
 
   uint32_t thread_base_token = bx * CTA_SIZE + thread_id / num_threads_per_token;   // 1024 threads -> 64 tokens per block
   const uint32_t bz_seqlen = padded_cu_seqlen[batch_id + 1] - padded_cu_seqlen[batch_id];
-  if (thread_base_token > bz_seqlen) return;
+  if (thread_base_token >= bz_seqlen) return; // must be >=  !!
 
   // the problem is, bx ranges from [0, max_seqlen // 64], so thread_base_token can sure cover each seqlen in the batch. And we have done padding
   // so, there is no need to re-check the output bound, when writing into Output.
@@ -231,7 +231,7 @@ __global__ void TransposePadPermuteVarlenKernel(T *__restrict__ input,  // total
   // T *input_ptr_base = input + batch_id * stride_bz_input + head_id * stride_h_input + thread_base_token * stride_seq_input + thread_id % num_threads_per_token * pack_size;
 
   T *input_ptr_base = input + 
-                      padded_cu_seqlen[batch_id] * stride_seq_input +   // v here is not even padded, so we should use original `cu_seqlen`
+                      padded_cu_seqlen[batch_id] * stride_seq_input +   // v here is padded by force, so just use `padded_cu_seqlen`
                       head_id * stride_h_input + 
                       thread_base_token * stride_seq_input + 
                       thread_id % num_threads_per_token * pack_size;
