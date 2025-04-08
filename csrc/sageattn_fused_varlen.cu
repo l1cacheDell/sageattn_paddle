@@ -305,7 +305,8 @@ __global__ void MeanScaleVarlenKernel(T *__restrict__ input,  // [head_dim, num_
   const uint32_t num_head = gridDim.x;
   const uint32_t head_dim = gridDim.z;
   // pad the number of tokens to 16 to deal with fp8 permute in previous kernel
-  uint32_t fp8_padded_num_tokens = (num_tokens + 15) / 16 * 16;
+  uint32_t bz_seqlen = padded_cu_seqlen[batch_id + 1] - padded_cu_seqlen[batch_id];
+  uint32_t fp8_padded_num_tokens = (bz_seqlen + 15) / 16 * 16;
   uint32_t num_iters = fp8_padded_num_tokens / gmem_stride + ((fp8_padded_num_tokens % gmem_stride) > thread_id * pack_size);
 
   // T *input_ptr_base = input + batch_id * stride_bz_input + head_id * stride_h_input + d_id * stride_d_input + thread_id * pack_size;
@@ -322,8 +323,8 @@ __global__ void MeanScaleVarlenKernel(T *__restrict__ input,  // [head_dim, num_
                             thread_id * pack_size;
 
   T x_val[8];
-  float x_val_float[8];
-  uint32_t x_val_fp8[2];
+  float x_val_float[8];  // fp32 x 8
+  uint32_t x_val_fp8[2]; // fp8  x 8
 
   float max_val = - 1000000.0f;
   float min_val = 1000000.0f;
@@ -382,7 +383,7 @@ __global__ void MeanScaleVarlenKernel(T *__restrict__ input,  // [head_dim, num_
   float recp_scale = scale_max / s_amax_val;
 
   // recalculate num_iters to cover all fp8 output tokens to prevent nan in random initialization
-  uint32_t padded_num_tokens = (num_tokens + pad_size - 1) / pad_size * pad_size;
+  uint32_t padded_num_tokens = (bz_seqlen + pad_size - 1) / pad_size * pad_size;
   num_iters = padded_num_tokens / gmem_stride + ((padded_num_tokens % gmem_stride) > thread_id * pack_size);
 
   for (int i = 0; i < num_iters; i++)
@@ -617,7 +618,7 @@ void transpose_pad_permute_varlen_cuda_fwd(
 // smooth v
 void scale_fuse_quant_varlen_cuda_fwd(
                 paddle::Tensor& input,  // transpose_permuted_padded_v. [head_dim, num_head, total_padded_seqlen]
-                paddle::Tensor& output, //                              [head_dim, num_head, total_padded_seqlen]
+                paddle::Tensor& output, // fp8                          [head_dim, num_head, total_padded_seqlen]
                 paddle::Tensor& scale,  // [b, num_head, head_dim]
                 paddle::Tensor& padded_cu_seqlen,
                 int max_seqlen_v, // unpadded max seqlen

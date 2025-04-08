@@ -86,7 +86,7 @@ cu_seqlens_v = paddle.to_tensor([0, seq_len], dtype=paddle.int32)
 padded_v, new_cu_seqlen_v = pad_sequences_to_aligned_chunks(v, cu_seqlens_v, 128)
 
 # sm90 kernel
-o1, _, _ = sageattn_custom_ops.sage_attention_varlen(q, 
+o1, vfp8, v_tm = sageattn_custom_ops.sage_attention_varlen(q, 
                                                 k, 
                                                 padded_v, 
                                                 cu_seqlens,
@@ -118,7 +118,7 @@ km = paddle.mean(k, axis=1, keepdim=True)
 km = km.squeeze(1) if tensor_layout == "NHD" else km.squeeze(2)
 
 
-o_set_1, q_int8_1, k_int8_1 = sageattn_custom_ops.sage_attention(q, k, v, km, None, head_dim**-0.5, "per_warp", "fp32", tensor_layout=0, is_causal=is_causal, smooth_k=True, smooth_v=False, return_lse=return_lse)
+o_set_1, v_fp8_std, v_tm_std = sageattn_custom_ops.sage_attention(q, k, v, km, None, head_dim**-0.5, "per_warp", "fp32", tensor_layout=0, is_causal=is_causal, smooth_k=True, smooth_v=False, return_lse=return_lse)
 
 o_set_1 = paddle.nn.functional.scaled_dot_product_attention(q, k, v, None, 0.0, True, False)
 
@@ -128,6 +128,12 @@ print(o2.shape)
 print(o1.shape)
 
 sim, l1, max_diff = precision_cmp_paddle(o1, o2)
+print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}")
+
+sim, l1, max_diff = precision_cmp_paddle(vfp8, v_fp8_std)
+print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}")
+
+sim, l1, max_diff = precision_cmp_paddle(v_tm, v_tm_std)
 print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}")
 
 # nan_mask = paddle.isnan(o1)

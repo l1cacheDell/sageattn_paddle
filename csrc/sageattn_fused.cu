@@ -962,7 +962,7 @@ void scale_fuse_quant_cuda_fwd(
     head_dim = input.shape()[1];
     stride_d_input = input.strides()[1];
     stride_h_input = input.strides()[2];
-    stride_d_output = output.strides()[1];
+    stride_d_output = output.strides()[1]; // [b, dim, num_head, seq_len]
     stride_h_output = output.strides()[2];
   }
   else

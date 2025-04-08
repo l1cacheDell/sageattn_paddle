@@ -147,6 +147,15 @@ km_total = paddle.concat([km1, km2, km3], axis=0)
 
 print("\n====== Compare v quant =======\n")
 
+vfp8_varlen_1, vfp8_varlen_2, vfp8_varlen_3 = paddle.split(v_transposed_fused.astype(paddle.float32), [256 - 0, 384 - 256, seq_len - 384], axis=-1)
+sim, l1, md = precision_cmp_paddle(v_tm_1, vfp8_varlen_1)
+print(f"sim: {sim}, l1: {l1}, max_diff: {md}")
+sim, l1, md = precision_cmp_paddle(v_tm_2, vfp8_varlen_2)
+print(f"sim: {sim}, l1: {l1}, max_diff: {md}")
+sim, l1, md = precision_cmp_paddle(v_tm_3, vfp8_varlen_3)
+print(f"sim: {sim}, l1: {l1}, max_diff: {md}")
+
+# 就是vfp8有问题，transposed都没问题
 vfp8_varlen_1, vfp8_varlen_2, vfp8_varlen_3 = paddle.split(vfp8_fused.astype(paddle.float32), [256 - 0, 384 - 256, seq_len - 384], axis=-1)
 sim, l1, md = precision_cmp_paddle(vfp8_1, vfp8_varlen_1)
 print(f"sim: {sim}, l1: {l1}, max_diff: {md}")
@@ -155,24 +164,18 @@ print(f"sim: {sim}, l1: {l1}, max_diff: {md}")
 sim, l1, md = precision_cmp_paddle(vfp8_3, vfp8_varlen_3)
 print(f"sim: {sim}, l1: {l1}, max_diff: {md}")
 
-# first_half, second_half = paddle.split(vfp8_1.astype(paddle.float32), [128, 128], axis=-1)
-# first_half2, second_half2 = paddle.split(vfp8_varlen_1, [128, 128], axis=-1)
-# sim, l1, md = precision_cmp_paddle(second_half, second_half2)
-# print(f"sim: {sim}, l1: {l1}, max_diff: {md}")  
 
-# sim, l1, md = precision_cmp_paddle(first_half, first_half2)
+# print("\n=================================\n")
+# print(vfp8_1.shape)
+
+# sim, l1, md = precision_cmp_paddle(vfp8_1[:, :, :, :32].astype(paddle.float32), vfp8_varlen_1[:, :, :32].astype(paddle.float32))
 # print(f"sim: {sim}, l1: {l1}, max_diff: {md}")
-print("\n=================================\n")
-print(vfp8_1.shape)
-
-sim, l1, md = precision_cmp_paddle(vfp8_1[:, :, :, :32].astype(paddle.float32), vfp8_varlen_1[:, :, :32].astype(paddle.float32))
-print(f"sim: {sim}, l1: {l1}, max_diff: {md}")
-sim, l1, md = precision_cmp_paddle(vfp8_1[:, :, :, 32:64].astype(paddle.float32), vfp8_varlen_1[:, :, 32:64].astype(paddle.float32))
-print(f"sim: {sim}, l1: {l1}, max_diff: {md}")
-sim, l1, md = precision_cmp_paddle(vfp8_1[:, :, :, 64:96].astype(paddle.float32), vfp8_varlen_1[:, :, 64:96].astype(paddle.float32))
-print(f"sim: {sim}, l1: {l1}, max_diff: {md}")
-sim, l1, md = precision_cmp_paddle(vfp8_1[:, :, :, 96:128].astype(paddle.float32), vfp8_varlen_1[:, :, 96:128].astype(paddle.float32))
-print(f"sim: {sim}, l1: {l1}, max_diff: {md}")
+# sim, l1, md = precision_cmp_paddle(vfp8_1[:, :, :, 32:64].astype(paddle.float32), vfp8_varlen_1[:, :, 32:64].astype(paddle.float32))
+# print(f"sim: {sim}, l1: {l1}, max_diff: {md}")
+# sim, l1, md = precision_cmp_paddle(vfp8_1[:, :, :, 64:96].astype(paddle.float32), vfp8_varlen_1[:, :, 64:96].astype(paddle.float32))
+# print(f"sim: {sim}, l1: {l1}, max_diff: {md}")
+# sim, l1, md = precision_cmp_paddle(vfp8_1[:, :, :, 96:128].astype(paddle.float32), vfp8_varlen_1[:, :, 96:128].astype(paddle.float32))
+# print(f"sim: {sim}, l1: {l1}, max_diff: {md}")
 
 
 # 这个居然是没问题的
@@ -198,29 +201,29 @@ print(o1.shape)
 sim, l1, max_diff = precision_cmp_paddle(o1, o2)
 print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}")
 
-print("\n========================== Output ==========================\n")
+# print("\n========================== Output ==========================\n")
 
-# compare three segment each
-o1_seg_1, o1_seg_2, o1_seg_3 = paddle.split(o1, [256 - 0, 384 - 256, seq_len - 384], axis=0)
-sim, l1, mdiff = precision_cmp_paddle(o1_seg_1.unsqueeze(0), o_set_1)
-print(f"seg_1 sim: {sim}, l1: {l1}, max_diff: {mdiff}")
+# # compare three segment each
+# o1_seg_1, o1_seg_2, o1_seg_3 = paddle.split(o1, [256 - 0, 384 - 256, seq_len - 384], axis=0)
+# sim, l1, mdiff = precision_cmp_paddle(o1_seg_1.unsqueeze(0), o_set_1)
+# print(f"seg_1 sim: {sim}, l1: {l1}, max_diff: {mdiff}")
 
-sim, l1, mdiff = precision_cmp_paddle(o1_seg_2.unsqueeze(0), o_set_2)
-print(f"seg_2 sim: {sim}, l1: {l1}, max_diff: {mdiff}")
+# sim, l1, mdiff = precision_cmp_paddle(o1_seg_2.unsqueeze(0), o_set_2)
+# print(f"seg_2 sim: {sim}, l1: {l1}, max_diff: {mdiff}")
 
-sim, l1, mdiff = precision_cmp_paddle(o1_seg_3.unsqueeze(0), o_set_3)
-print(f"seg_3 sim: {sim}, l1: {l1}, max_diff: {mdiff}")
+# sim, l1, mdiff = precision_cmp_paddle(o1_seg_3.unsqueeze(0), o_set_3)
+# print(f"seg_3 sim: {sim}, l1: {l1}, max_diff: {mdiff}")
 
-# 沿着num_head维度切分一下
-sim, l1, max_diff = precision_cmp_paddle(o1[:, :8, :], o2[:, :8, :])
-print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}") # 0.593
-sim, l1, max_diff = precision_cmp_paddle(o1[:, 8:16, :], o2[:, 8:16, :])
-print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}") # 0.637
-sim, l1, max_diff = precision_cmp_paddle(o1[:, 16:, :], o2[:, 16:, :])
-print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}") # 0.693
-print()
+# # 沿着num_head维度切分一下
+# sim, l1, max_diff = precision_cmp_paddle(o1[:, :8, :], o2[:, :8, :])
+# print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}") # 0.593
+# sim, l1, max_diff = precision_cmp_paddle(o1[:, 8:16, :], o2[:, 8:16, :])
+# print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}") # 0.637
+# sim, l1, max_diff = precision_cmp_paddle(o1[:, 16:, :], o2[:, 16:, :])
+# print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}") # 0.693
+# print()
 
-sim, l1, max_diff = precision_cmp_paddle(o1[:, 16:18, :], o2[:, 16:18, :])
-print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}") # 0.693
-sim, l1, max_diff = precision_cmp_paddle(o1[:, 22:, :], o2[:, 22:, :])
-print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}") # 0.693
+# sim, l1, max_diff = precision_cmp_paddle(o1[:, 16:18, :], o2[:, 16:18, :])
+# print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}") # 0.693
+# sim, l1, max_diff = precision_cmp_paddle(o1[:, 22:, :], o2[:, 22:, :])
+# print(f"result sim: {sim}, l1: {l1}, max_diff: {max_diff}") # 0.693
