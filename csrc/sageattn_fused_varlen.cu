@@ -231,7 +231,7 @@ __global__ void TransposePadPermuteVarlenKernel(T *__restrict__ input,  // total
   // T *input_ptr_base = input + batch_id * stride_bz_input + head_id * stride_h_input + thread_base_token * stride_seq_input + thread_id % num_threads_per_token * pack_size;
 
   T *input_ptr_base = input + 
-                      padded_cu_seqlen[batch_id] * stride_seq_input + 
+                      padded_cu_seqlen[batch_id] * stride_seq_input +   // v here is not even padded, so we should use original `cu_seqlen`
                       head_id * stride_h_input + 
                       thread_base_token * stride_seq_input + 
                       thread_id % num_threads_per_token * pack_size;
@@ -248,6 +248,7 @@ __global__ void TransposePadPermuteVarlenKernel(T *__restrict__ input,  // total
 
   // T* output_ptr_base = output + batch_id * stride_bz_output + head_id * stride_h_output + bx * CTA_SIZE + thread_id % num_threads_per_cta * pack_size + thread_id / num_threads_per_cta * stride_d_output;
 
+  // 引入更多seqlen之后，是不是后面的会复写前面的
   T* output_ptr_base = output + 
                       padded_cu_seqlen[batch_id] + 
                       head_id * stride_h_output + 
@@ -835,7 +836,8 @@ std::vector<paddle::Tensor> per_channel_varlen_fp8(paddle::Tensor& v,           
     int h_kv = v.shape()[1];
 
     int kv_len = max_seq_len_v; // just the max seqlen v, not padded.
-    int padded_len = (kv_len + 63) / 64 * 64;
+    // int padded_len = (kv_len + 63) / 64 * 64;
+    PD_CHECK(padded_total_seq_len % 128 == 0 || padded_total_seq_len % 64 == 0, "v must be 64 or 128 padded");
 
     paddle::Tensor v_transposed_permutted = paddle::empty({head_dim, h_kv, padded_total_seq_len}, v.dtype(), paddle::GPUPlace());
     
