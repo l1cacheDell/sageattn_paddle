@@ -1149,10 +1149,13 @@ std::vector<paddle::Tensor> sage_attention_varlen_fwd(paddle::Tensor& q,        
                                                     paddle::Tensor& k,          // total_seqlen x num_head x head_dim
                                                     paddle::Tensor& v,          // total_seqlen x num_head x head_dim
                                                     paddle::Tensor& cu_seqlen_q,
+                                                    paddle::Tensor& cu_seqlen_v,
+                                                    paddle::Tensor& cu_seqlen_v_padded,
                                                     paddle::Tensor& segment_ids,
                                                     paddle::optional<paddle::Tensor>& vm,
                                                     int max_seqlen_q,
                                                     int max_seqlen_k,
+                                                    int total_seqlen_v_padded,
                                                     float sm_scale,
                                                     std::string qk_quant_gran,
                                                     std::string pv_accum_dtype,
@@ -1222,7 +1225,9 @@ std::vector<std::vector<int64_t>> sage_attention_varlen_InferShape(
   const std::vector<int64_t> query_shape, 
   const std::vector<int64_t> key_shape, 
   const std::vector<int64_t> value_shape,
-  const std::vector<int64_t> cu_seqlen_shape,
+  const std::vector<int64_t> cu_seqlen_q_shape,
+  const std::vector<int64_t> cu_seqlen_v_shape,
+  const std::vector<int64_t> cu_seqlen_v_padded_shape,
   const std::vector<int64_t> segment_ids_shape,
   const paddle::optional<std::vector<int64_t>>& vm_shape) {
     return {value_shape, query_shape};
@@ -1239,10 +1244,12 @@ std::vector<paddle::DataType> sage_attention_varlen_InferDtype(
 }
 
 PD_BUILD_OP(sage_attention_varlen)
-    .Inputs({"q", "k", "v", "cu_seqlen", "segment_ids", paddle::Optional("vm")})
-    .Outputs({"o", "q_int8", "k_int8", "km"})
+    .Inputs({"q", "k", "v", "cu_seqlen_q", "cu_seqlen_v", "cu_seqlen_v_padded", "segment_ids", paddle::Optional("vm")})
+    .Outputs({"o", "v_fp8_fused", "out2"})
     .Attrs({"max_seqlen_q: int",
             "max_seqlen_k: int",
+            "max_seqlen_v: int",
+            "total_seqlen_v_padded: int",
             "sm_scale: float",
             "qk_quant_gran: std::string",
             "pv_accum_dtype: std::string",

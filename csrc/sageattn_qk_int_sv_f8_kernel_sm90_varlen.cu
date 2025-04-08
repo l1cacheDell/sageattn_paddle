@@ -1,4 +1,4 @@
-#include "sageattn_qk_int_sv_f8_kernel_sm90.cuh"
+#include "sageattn_utils.cuh"
 #include "sageattn_fused_varlen.cuh"
 
 template<uint32_t CTA_Q, uint32_t CTA_K, uint32_t NUM_THREADS, uint32_t head_dim, QuantGranularity Q_GRAN, QuantGranularity K_GRAN, typename DTypeOut, MaskMode mask_mode = MaskMode::kNone, bool fuse_v_scale=false>
@@ -8,6 +8,7 @@ __global__ void qk_int8_sv_f8_attn_varlen_kernel(const __grid_constant__ CUtenso
                                                 float *__restrict__ Q_scale, float *__restrict__ K_scale, float *__restrict__ V_scale,
                                                 DTypeOut* O, 
                                                 uint32_t *__restrict__ cu_seqlen,
+                                                uint32_t *__restrict__ cu_seqlen_v_padded,
                                                 uint32_t stride_h_o, uint32_t stride_seq_o,
                                                 const uint32_t qo_len, // max_seqlen_q
                                                 const uint32_t kv_len, 
@@ -135,7 +136,7 @@ __global__ void qk_int8_sv_f8_attn_varlen_kernel(const __grid_constant__ CUtenso
     //                                       seqlen  head_dim num_head    bsz
     //                                            |  |         |         |
     // load_async_4D(sV, &tensorMapV, &barrier_V, 0, 0, kv_head_id, batch_id);
-    load_async_3D(sV, &tensorMapV, &barrier_V, cu_seqlen[batch_id], 0, kv_head_id);
+    load_async_3D(sV, &tensorMapV, &barrier_V, cu_seqlen_v_padded[batch_id], 0, kv_head_id);
   }
 
   float q_scale = Q_scale[q_scale_idx];
@@ -256,7 +257,7 @@ __global__ void qk_int8_sv_f8_attn_varlen_kernel(const __grid_constant__ CUtenso
     {
       expect_bytes<(CTA_K * head_dim) * sizeof(int8_t)>(&barrier_V);
       // load_async_4D(sV, &tensorMapV, &barrier_V, iter * CTA_K, 0, kv_head_id, batch_id);  // original v shape: [b, num_head, headdim, seqlen, ]
-      load_async_3D(sV, &tensorMapV, &barrier_V, iter * CTA_K + cu_seqlen[batch_id], 0, kv_head_id);
+      load_async_3D(sV, &tensorMapV, &barrier_V, iter * CTA_K + cu_seqlen_v_padded[batch_id], 0, kv_head_id);
     }
   }
 
@@ -455,12 +456,13 @@ __global__ void qk_int8_sv_f8_attn_varlen_kernel(const __grid_constant__ CUtenso
 std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm90_varlen_fwd(
                     paddle::Tensor& query,      // total_seqlen x num_head x head_dim
                     paddle::Tensor& key,        // total_seqlen x num_head x head_dim
-                    paddle::Tensor& value,      // head_dim x num_head x total_seqlen
+                    paddle::Tensor& value,      // head_dim x num_head x total_seqlen_padded
                     paddle::Tensor& output,     // total_seqlen x num_head x head_dim
                     paddle::Tensor& query_scale,  // b, h_qk, seqlen // 64
                     paddle::Tensor& key_scale,    // b, h_qk, seqlen // 64
                     paddle::Tensor& value_scale,  // b, h_kv, head_dim
                     paddle::Tensor& cu_seqlen_q,
+                    paddle::Tensor& cu_seqlen_v_padded,
                     int max_seqlen_q,
                     int max_seqlen_k,
                     int tensor_layout,
@@ -580,7 +582,6 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_s
             stride_h_k, stride_seq_k);
           CUtensorMap tma_map_V = create_tensor_map_3D<HEAD_DIM, CTA_K>(reinterpret_cast<int8_t*>(value.data()), num_kv_heads, HEAD_DIM, value.shape()[2], 
             stride_h_v, stride_d_v);
-          // stride_d_v, stride_h_v);
 
           auto* kernel = qk_int8_sv_f8_attn_varlen_kernel<CTA_Q, CTA_K, NUM_THREADS, HEAD_DIM,  static_cast<QuantGranularity>(QK_QUANT_GRAN), static_cast<QuantGranularity>(QK_QUANT_GRAN), DTypeOut, mask_mode, true>;
           size_t sMemSize = CTA_Q * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t);
@@ -598,6 +599,7 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_s
             reinterpret_cast<float*>(value_scale.data()),
             reinterpret_cast<DTypeOut*>(output.data()),
             reinterpret_cast<uint32_t*>(cu_seqlen_q.data()),
+            reinterpret_cast<uint32_t*>(cu_seqlen_v_padded.data()),
             stride_h_o, stride_seq_o,
             qo_len, kv_len, num_kv_groups, sm_scale);
         });
@@ -618,7 +620,6 @@ std::vector<paddle::Tensor> sage_attention_varlen_fwd(paddle::Tensor& q,        
                                                     paddle::optional<paddle::Tensor>& vm,
                                                     int max_seqlen_q,
                                                     int max_seqlen_k,
-                                                    int max_seqlen_v,
                                                     int total_seqlen_v_padded,
                                                     float sm_scale,
                                                     std::string qk_quant_gran,
@@ -647,13 +648,15 @@ std::vector<paddle::Tensor> sage_attention_varlen_fwd(paddle::Tensor& q,        
   int WARPQ = 16;
   constexpr int BLKK = 128;
   std::vector<paddle::Tensor>&& quant_qk_results = per_warp_int8_varlen_cuda_fwd(q, k, cu_seqlen_q, segment_ids, max_seqlen_q, max_seqlen_k, BLKQ, WARPQ, BLKK); // q_int8, q_scale, k_int8, k_scale
-  paddle::Tensor o = paddle::empty(v.shape(), v.dtype(), paddle::GPUPlace()); // so far, the shape of v is not permutted and transposed. Still [total_seqlen, num_head, head_dim]
+
+  // v was padded, so we cannot use v for output shape
+  paddle::Tensor o = paddle::empty(q.shape(), q.dtype(), paddle::GPUPlace()); // so far, the shape of v is not permutted and transposed. Still [total_seqlen, num_head, head_dim]
 
   std::vector<paddle::Tensor>&& quant_vfp8_results = per_channel_varlen_fp8(v, 
       cu_seqlen_v, 
       cu_seqlen_v_padded, 
       total_seqlen_v_padded, 
-      max_seqlen_v, 
+      max_seqlen_k, 
       tensor_layout, 448.0, false);
 
   qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm90_varlen_fwd(quant_qk_results[0], // q
@@ -664,6 +667,7 @@ std::vector<paddle::Tensor> sage_attention_varlen_fwd(paddle::Tensor& q,        
     quant_qk_results[3],    // k_scale
     quant_vfp8_results[1],  // v_scale
     cu_seqlen_q, 
+    cu_seqlen_v_padded,
     max_seqlen_q,
     max_seqlen_k,
     tensor_layout, 
@@ -704,7 +708,6 @@ PD_BUILD_OP(sage_attention_varlen)
     .Outputs({"o", "v_fp8_fused", "out2"})
     .Attrs({"max_seqlen_q: int",
             "max_seqlen_k: int",
-            "max_seqlen_v: int",
             "total_seqlen_v_padded: int",
             "sm_scale: float",
             "qk_quant_gran: std::string",

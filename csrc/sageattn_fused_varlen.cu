@@ -221,7 +221,7 @@ __global__ void TransposePadPermuteVarlenKernel(T *__restrict__ input,  // total
   const uint32_t h_kv = blockDim.y;
 
   uint32_t thread_base_token = bx * CTA_SIZE + thread_id / num_threads_per_token;   // 1024 threads -> 64 tokens per block
-  const uint32_t bz_seqlen = cu_seqlen[batch_id + 1] - cu_seqlen[batch_id];
+  const uint32_t bz_seqlen = padded_cu_seqlen[batch_id + 1] - padded_cu_seqlen[batch_id];
   if (thread_base_token > bz_seqlen) return;
 
   // the problem is, bx ranges from [0, max_seqlen // 64], so thread_base_token can sure cover each seqlen in the batch. And we have done padding
@@ -230,7 +230,11 @@ __global__ void TransposePadPermuteVarlenKernel(T *__restrict__ input,  // total
   // recompute
   // T *input_ptr_base = input + batch_id * stride_bz_input + head_id * stride_h_input + thread_base_token * stride_seq_input + thread_id % num_threads_per_token * pack_size;
 
-  T *input_ptr_base = input + cu_seqlen[batch_id] * stride_seq_input + head_id * stride_h_input + thread_base_token * stride_seq_input + thread_id % num_threads_per_token * pack_size;
+  T *input_ptr_base = input + 
+                      padded_cu_seqlen[batch_id] * stride_seq_input + 
+                      head_id * stride_h_input + 
+                      thread_base_token * stride_seq_input + 
+                      thread_id % num_threads_per_token * pack_size;
 
   // recompute: [stride_seq_input = h_kv x head_dim]
   // analysis: the original output shape: [b, head_dim, num_head, seq_len]
@@ -244,7 +248,12 @@ __global__ void TransposePadPermuteVarlenKernel(T *__restrict__ input,  // total
 
   // T* output_ptr_base = output + batch_id * stride_bz_output + head_id * stride_h_output + bx * CTA_SIZE + thread_id % num_threads_per_cta * pack_size + thread_id / num_threads_per_cta * stride_d_output;
 
-  T* output_ptr_base = output + padded_cu_seqlen[batch_id] + head_id * stride_h_output + bx * CTA_SIZE + thread_id % num_threads_per_cta * pack_size + thread_id / num_threads_per_cta * stride_d_output;
+  T* output_ptr_base = output + 
+                      padded_cu_seqlen[batch_id] + 
+                      head_id * stride_h_output + 
+                      bx * CTA_SIZE + 
+                      thread_id % num_threads_per_cta * pack_size + 
+                      thread_id / num_threads_per_cta * stride_d_output;
 
   __shared__ T shared_load[CTA_SIZE][head_dim];
   __shared__ T shared_store[head_dim][CTA_SIZE];
@@ -811,9 +820,9 @@ std::vector<paddle::Tensor> per_warp_int8_varlen_cuda_fwd(paddle::Tensor& q,  //
     return {q_int8, q_scale, k_int8, k_scale, km};
 }
 
-std::vector<paddle::Tensor> per_channel_varlen_fp8(paddle::Tensor& v, // total_seqlen x num_head x head_dim
-                                                  paddle::Tensor& cu_seqlen_v,
-                                                  paddle::Tensor& padded_cu_seqlen,
+std::vector<paddle::Tensor> per_channel_varlen_fp8(paddle::Tensor& v,                 // total_seqlen x num_head x head_dim
+                                                  paddle::Tensor& cu_seqlen_v,        // not padded
+                                                  paddle::Tensor& padded_cu_seqlen,   // padded
                                                   int padded_total_seq_len,
                                                   int max_seq_len_v,
                                                   int tensor_layout,

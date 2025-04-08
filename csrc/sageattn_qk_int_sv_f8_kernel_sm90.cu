@@ -1,4 +1,4 @@
-#include "sageattn_qk_int_sv_f8_kernel_sm90.cuh"
+#include "sageattn_utils.cuh"
 #include "sageattn_fused.cuh"
 
 //
@@ -812,7 +812,7 @@ std::vector<paddle::Tensor> sage_attention_fwd(paddle::Tensor& q,
   int v_seq_len = (tensor_layout == 0) ? v.shape()[1] : v.shape()[2];
   PD_CHECK(v_seq_len % 128 == 0, "v_seq_len must be multiple of 128, do padding before calling this op.");
 
-  paddle::Tensor o = paddle::empty(v.shape(), v.dtype(), paddle::GPUPlace());
+  paddle::Tensor o = paddle::empty(q.shape(), q.dtype(), paddle::GPUPlace());
 
   std::vector<paddle::Tensor>&& quant_vfp8_results = per_channel_fp8(v, tensor_layout, 448.0, false);
   qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm90_fwd(quant_qk_results[0], quant_qk_results[2], quant_vfp8_results[0], o, quant_qk_results[1], quant_qk_results[3], quant_vfp8_results[1], tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse);
