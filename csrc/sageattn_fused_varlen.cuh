@@ -1,10 +1,10 @@
 #pragma once
 #include "paddle/extension.h"
 
-std::vector<paddle::Tensor> per_warp_int8_varlen_cuda_fwd(paddle::Tensor& q,  // total_seqlen x num_head x head_dim
-                                                    paddle::Tensor& k,    // total_seqlen x num_head x head_dim
+std::vector<paddle::Tensor> per_warp_int8_varlen_cuda_fwd(paddle::Tensor& q,    // total_seqlen x num_head x head_dim
+                                                    paddle::Tensor& k,          // total_seqlen x num_head x head_dim
                                                     paddle::Tensor& cu_seqlen_q,
-                                                    paddle::Tensor& segment_ids,
+                                                    paddle::Tensor& km,
                                                     int max_seq_len_q,
                                                     int max_seq_len_k,
                                                     int BLKQ,
@@ -26,7 +26,7 @@ std::vector<paddle::Tensor> sage_attention_varlen_fwd(paddle::Tensor& q,        
                                                     paddle::Tensor& cu_seqlen_q,
                                                     paddle::Tensor& cu_seqlen_v,
                                                     paddle::Tensor& cu_seqlen_v_padded,
-                                                    paddle::Tensor& segment_ids,
+                                                    paddle::Tensor& km,
                                                     paddle::optional<paddle::Tensor>& vm,
                                                     int max_seqlen_q,
                                                     int max_seqlen_k,

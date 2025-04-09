@@ -616,7 +616,7 @@ std::vector<paddle::Tensor> sage_attention_varlen_fwd(paddle::Tensor& q,        
                                                     paddle::Tensor& cu_seqlen_q,
                                                     paddle::Tensor& cu_seqlen_v,
                                                     paddle::Tensor& cu_seqlen_v_padded,
-                                                    paddle::Tensor& segment_ids,
+                                                    paddle::Tensor& km,
                                                     paddle::optional<paddle::Tensor>& vm,
                                                     int max_seqlen_q,
                                                     int max_seqlen_k,
@@ -647,7 +647,7 @@ std::vector<paddle::Tensor> sage_attention_varlen_fwd(paddle::Tensor& q,        
   constexpr int BLKQ = 64;
   int WARPQ = 16;
   constexpr int BLKK = 128;
-  std::vector<paddle::Tensor>&& quant_qk_results = per_warp_int8_varlen_cuda_fwd(q, k, cu_seqlen_q, segment_ids, max_seqlen_q, max_seqlen_k, BLKQ, WARPQ, BLKK); // q_int8, q_scale, k_int8, k_scale
+  std::vector<paddle::Tensor>&& quant_qk_results = per_warp_int8_varlen_cuda_fwd(q, k, cu_seqlen_q, km, max_seqlen_q, max_seqlen_k, BLKQ, WARPQ, BLKK); // q_int8, q_scale, k_int8, k_scale
 
   // v was padded, so we cannot use v for output shape
   paddle::Tensor o = paddle::empty(q.shape(), q.dtype(), paddle::GPUPlace()); // so far, the shape of v is not permutted and transposed. Still [total_seqlen, num_head, head_dim]

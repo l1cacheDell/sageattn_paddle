@@ -785,7 +785,7 @@ void mean_scale_fuse_quant_varlen_cuda_fwd(
 std::vector<paddle::Tensor> per_warp_int8_varlen_cuda_fwd(paddle::Tensor& q,  // total_seqlen x num_head x head_dim
                                                     paddle::Tensor& k,    // total_seqlen x num_head x head_dim
                                                     paddle::Tensor& cu_seqlen_q,
-                                                    paddle::Tensor& segment_ids,
+                                                    paddle::Tensor& km,
                                                     int max_seq_len_q,
                                                     int max_seq_len_k,
                                                     int BLKQ,
@@ -811,9 +811,6 @@ std::vector<paddle::Tensor> per_warp_int8_varlen_cuda_fwd(paddle::Tensor& q,  //
     quant_per_warp_int8_varlen_cuda_fwd(q, q_int8, q_scale, 
                                         cu_seqlen_q,
                                         max_seq_len_q, BLKQ, WARPQ);
-
-    // compute k_mean
-    paddle::Tensor km = paddle::experimental::segment_pool(k, segment_ids, "MEAN");
 
     // quant k -> k_int8
     quant_per_block_int8_fuse_sub_mean_varlen_cuda_fwd(k, km, k_int8, k_scale, 

@@ -1,4 +1,4 @@
-# To run this script you need to install torch and flash attn 3
+
 import torch
 from flash_attn_interface import flash_attn_varlen_func
 import paddle
@@ -84,7 +84,7 @@ total_seqlens = [seqlen - random.randint(-10, i + 10) for i in range(bsz)]    # 
 # bsz = 2
 # total_seqlens = [1027, 1018]
 total_seqlen: int = sum(total_seqlens)
-# print("the seqlens of 4-segs: ", total_seqlens)
+print("the seqlens of 4-segs: ", total_seqlens)
 max_seqlen: int = max(total_seqlens)
 cu_seqlens: list = [0] + [sum(total_seqlens[:i+1]) for i in range(bsz)]
 cu_seqlens_list = cu_seqlens
@@ -99,10 +99,9 @@ k = torch.randn(total_seqlen, num_head, head_dim, dtype=torch.float16).cuda()
 v = torch.randn(total_seqlen, num_head, head_dim, dtype=torch.float16).cuda()
 cu_seqlens = torch.tensor(cu_seqlens, dtype=torch.int32).cuda()
 
-# warp up
-for i in range(5):
+for i in range(10):
     o_torch, _ = flash_attn_varlen_func(q, k, v, cu_seqlens, cu_seqlens, max_seqlen, max_seqlen, sm_scale, is_causal)
-
+    torch.cuda.synchronize()
 
 for i in range(100):
     torch.cuda.synchronize()
@@ -111,7 +110,7 @@ for i in range(100):
     torch.cuda.synchronize()
     nvtx.end_range(torch_nvtx)
 
-
+# prepare tensor
 q_npy = q.cpu().numpy()
 k_npy = k.cpu().numpy()
 v_npy = v.cpu().numpy()
@@ -134,7 +133,31 @@ padded_v, new_cu_seqlen_v = pad_sequences_to_aligned_chunks(v, cu_seqlens, 128)
 print("the padded cu-seqlens: ", new_cu_seqlen_v)
 taltal_seqlens_padded_v = [new_cu_seqlen_v[i]-new_cu_seqlen_v[i-1] for i in range(1, len(new_cu_seqlen_v))]
 
-for i in range(5):
+for i in range(10):
+    km = triton_ops.segment_mean(k, cu_seqlens)
+    o1, vfp8_fused, v_transposed_fused = sageattn_custom_ops.sage_attention_varlen(q, 
+                                                    k, 
+                                                    padded_v, 
+                                                    cu_seqlens,
+                                                    cu_seqlens,
+                                                    new_cu_seqlen_v,
+                                                    km,
+                                                    None,
+                                                    max_seqlen,
+                                                    max_seqlen,
+                                                    new_cu_seqlen_v[-1],
+                                                    head_dim**-0.5,
+                                                    "per_warp",
+                                                    "fp16",
+                                                    tensor_layout=0,
+                                                    is_causal=is_causal,
+                                                    smooth_k=True, 
+                                                    smooth_v=False, 
+                                                    return_lse=False)
+    
+for i in range(100):
+    paddle.device.synchronize()
+    paddle_nvtx = nvtx.start_range(message="paddle", color="green")
     km = triton_ops.segment_mean(k, cu_seqlens)
     o1, vfp8_fused, v_transposed_fused = sageattn_custom_ops.sage_attention_varlen(q, 
                                                 k, 
@@ -155,58 +178,43 @@ for i in range(5):
                                                 smooth_k=True, 
                                                 smooth_v=False, 
                                                 return_lse=False)
-
-paddle.device.synchronize()
-
-# for i in range(100):
-#     paddle.device.synchronize()
-#     paddle_nvtx = nvtx.start_range(message="paddle", color="green")
-#     km = triton_ops.segment_mean(k, cu_seqlens)
-#     o1, vfp8_fused, v_transposed_fused = sageattn_custom_ops.sage_attention_varlen(q, 
-#                                                 k, 
-#                                                 padded_v, 
-#                                                 cu_seqlens,
-#                                                 cu_seqlens,
-#                                                 new_cu_seqlen_v,
-#                                                 km,
-#                                                 None,
-#                                                 max_seqlen,
-#                                                 max_seqlen,
-#                                                 new_cu_seqlen_v[-1],
-#                                                 head_dim**-0.5,
-#                                                 "per_warp",
-#                                                 "fp16",
-#                                                 tensor_layout=0,
-#                                                 is_causal=is_causal,
-#                                                 smooth_k=True, 
-#                                                 smooth_v=False, 
-#                                                 return_lse=False)
-#     paddle.device.synchronize()
-#     nvtx.end_range(paddle_nvtx)
+    paddle.device.synchronize()
+    nvtx.end_range(paddle_nvtx)
 
 sim, l1, max_diff = precision_cmp_paddle(o, o1)
 print(f"Total sim: {sim}, l1: {l1}, max_diff: {max_diff}")
 
-nan_mask = paddle.isnan((o - o1).astype(paddle.float32))
-nan_indices = paddle.nonzero(nan_mask)
-print(nan_indices)
-# 转为 NumPy
-nan_indices_np = nan_indices.numpy()
+# FA2: 
+for i in range(5):
+    fmha_out_prefill = paddle.nn.functional.flash_attention.flash_attn_unpadded(
+        q,
+        k,
+        v,
+        cu_seqlens,
+        cu_seqlens,
+        max_seqlen,
+        max_seqlen,
+        head_dim**-0.5,
+        causal=True,
+        training=False,
+    )[0]
+sim, l1, max_diff = precision_cmp_paddle(o, fmha_out_prefill)
+print(f"Total sim: {sim}, l1: {l1}, max_diff: {max_diff}")
 
-nan_mask = paddle.isnan(o)
-nan_indices = paddle.nonzero(nan_mask)
-print(nan_indices)
-# 转为 NumPy
-nan_indices_np = nan_indices.numpy()
-
-nan_mask = paddle.isnan(o1)
-nan_indices = paddle.nonzero(nan_mask)
-print(nan_indices)
-# 转为 NumPy
-nan_indices_np = nan_indices.numpy()
-
-# 保存为 txt 文件（整数格式）
-np.savetxt("nan_indices.txt", nan_indices_np, fmt="%d")
-
-# 打印保存的路径
-print("已保存 nan_indices 到 nan_indices.txt")
+for i in range(100):
+    paddle.device.synchronize()
+    paddle_nvtx = nvtx.start_range(message="FA2", color="orange")
+    fmha_out_prefill = paddle.nn.functional.flash_attention.flash_attn_unpadded(
+        q,
+        k,
+        v,
+        cu_seqlens,
+        cu_seqlens,
+        max_seqlen,
+        max_seqlen,
+        head_dim**-0.5,
+        causal=True,
+        training=False,
+    )[0]
+    paddle.device.synchronize()
+    nvtx.end_range(paddle_nvtx)

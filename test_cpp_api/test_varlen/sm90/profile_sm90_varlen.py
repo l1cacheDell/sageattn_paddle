@@ -6,6 +6,7 @@ import sageattn_custom_ops
 import numpy as np
 import nvtx
 import random
+from paddlemix import triton_ops
 
 def precision_cmp_paddle(t1: paddle.Tensor, t2: paddle.Tensor):
     
@@ -72,7 +73,7 @@ def pad_sequences_to_aligned_chunks(v, cu_seqlens_v, align_size=128):
 seqlen = 1024
 bsz = 4
 total_seqlens = [seqlen - random.randint(-10, i + 10) for i in range(bsz)]    # 例如 [1023, 1024, 1026, 1025]
-total_seqlens = [1027, 1018, 1014, 1014]
+# total_seqlens = [1027, 1018, 1014, 1014]
 
 # bsz = 2
 # total_seqlens = [1027, 1018]
@@ -93,6 +94,7 @@ v = torch.randn(total_seqlen, num_head, head_dim, dtype=torch.float16).cuda()
 cu_seqlens = torch.tensor(cu_seqlens, dtype=torch.int32).cuda()
 
 o_torch, _ = flash_attn_varlen_func(q, k, v, cu_seqlens, cu_seqlens, max_seqlen, max_seqlen, sm_scale, is_causal)
+torch.cuda.synchronize()
 
 # prepare tensor
 q_npy = q.cpu().numpy()
@@ -117,25 +119,27 @@ padded_v, new_cu_seqlen_v = pad_sequences_to_aligned_chunks(v, cu_seqlens, 128)
 print("the padded cu-seqlens: ", new_cu_seqlen_v)
 taltal_seqlens_padded_v = [new_cu_seqlen_v[i]-new_cu_seqlen_v[i-1] for i in range(1, len(new_cu_seqlen_v))]
 
-o1, vfp8_fused, v_transposed_fused = sageattn_custom_ops.sage_attention_varlen(q, 
-                                                k, 
-                                                padded_v, 
-                                                cu_seqlens,
-                                                cu_seqlens,
-                                                new_cu_seqlen_v,
-                                                segment_ids,
-                                                None,
-                                                max_seqlen,
-                                                max_seqlen,
-                                                new_cu_seqlen_v[-1],
-                                                head_dim**-0.5,
-                                                "per_warp",
-                                                "fp16",
-                                                tensor_layout=0,
-                                                is_causal=is_causal,
-                                                smooth_k=True, 
-                                                smooth_v=False, 
-                                                return_lse=False)
+for i in range(100):
+    km = triton_ops.segment_mean(k, cu_seqlens)
+    o1, vfp8_fused, v_transposed_fused = sageattn_custom_ops.sage_attention_varlen(q, 
+                                                    k, 
+                                                    padded_v, 
+                                                    cu_seqlens,
+                                                    cu_seqlens,
+                                                    new_cu_seqlen_v,
+                                                    km,
+                                                    None,
+                                                    max_seqlen,
+                                                    max_seqlen,
+                                                    new_cu_seqlen_v[-1],
+                                                    head_dim**-0.5,
+                                                    "per_warp",
+                                                    "fp16",
+                                                    tensor_layout=0,
+                                                    is_causal=is_causal,
+                                                    smooth_k=True, 
+                                                    smooth_v=False, 
+                                                    return_lse=False)
 
 paddle.device.synchronize()
 print(o.shape, o1.shape)

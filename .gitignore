@@ -5,3 +5,5 @@ build/
 errors_only.txt
 *__pycache__/
 http_auth.py
+
+**.nsys-rep
