@@ -837,7 +837,7 @@ std::vector<paddle::DataType> sage_attention_InferDtype(
   return {C_dtype};
 }
 
-PD_BUILD_OP(sage_attention)
+PD_BUILD_OP(sage_attention2)
     .Inputs({"q", "k", "v", "km", paddle::Optional("vm")})
     .Outputs({"o", "out1", "out2"})
     .Attrs({"sm_scale: float",

@@ -703,7 +703,7 @@ std::vector<paddle::DataType> sage_attention_varlen_InferDtype(
   return {C_dtype, paddle::DataType::INT8};
 }
 
-PD_BUILD_OP(sage_attention_varlen)
+PD_BUILD_OP(sage_attention_varlen2)
     .Inputs({"q", "k", "v", "cu_seqlen_q", "cu_seqlen_v", "cu_seqlen_v_padded", "segment_ids", paddle::Optional("vm")})
     .Outputs({"o", "v_fp8_fused", "out2"})
     .Attrs({"max_seqlen_q: int",

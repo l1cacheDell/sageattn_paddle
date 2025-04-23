@@ -155,7 +155,7 @@ for capability in compute_capabilities:
         source_files += [
             'csrc/sageattn_qk_int_sv_f8_kernel_sm90.cu',
             'csrc/sageattn_qk_int_sv_f8_kernel_sm90_varlen.cu',
-            'csrc/sageattn_qk_int_sv_f8_dsk_kernel_sm90.cu',
+            # 'csrc/sageattn_qk_int_sv_f8_dsk_kernel_sm90.cu',
         ]
     elif capability[0] == "8" and capability[2] == "0":
         source_files += [
@@ -167,6 +167,8 @@ for capability in compute_capabilities:
             'csrc/sageattn_qk_int_sv_f8_kernel_sm89.cu',
             'csrc/sageattn_qk_int_sv_f8_kernel_sm89_varlen.cu'
         ]
+
+os.environ.pop('PADDLE_CUDA_ARCH_LIST', None)
 
 setup(
     name='sageattn_custom_ops',
