@@ -81,7 +81,7 @@ km = paddle.load("./sa_inputs/km.pdparams").astype(paddle.float16)
 # q = paddle.randn(q.shape, dtype=paddle.float16)
 # k = paddle.randn(k.shape, dtype=paddle.float16)
 # v_padded = paddle.randn(v_padded.shape, dtype=paddle.float16)
-# q = paddle.randn([131, 12, 128], paddle.float16)
+q = paddle.randn([131, 12, 128], paddle.float16)
 # k = paddle.randn([131, 2, 128], paddle.float16)
 # v = paddle.randn([131, 2, 128], paddle.float16)
 

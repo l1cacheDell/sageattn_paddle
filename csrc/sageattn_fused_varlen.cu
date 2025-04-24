@@ -79,13 +79,6 @@ __global__ void QuantInt8Kernel_Varlen(T *__restrict__ input, T *__restrict__ me
   uint32_t batch_id = blockIdx.z;
   uint32_t thread_id = threadIdx.x;
 
-  // printf("ThreadIdx: %d\n", thread_id);
-
-  if (thread_id == 0) {
-    printf("555\n");
-  }
-
-
   const uint32_t num_tokens = cu_seqlen[batch_id + 1] - cu_seqlen[batch_id];
 
   uint32_t thread_base_token = bx * BLOCK_SIZE + thread_id / num_threads_per_token;
@@ -110,10 +103,6 @@ __global__ void QuantInt8Kernel_Varlen(T *__restrict__ input, T *__restrict__ me
     {
       mean_val_float[j] = convert_to_float(mean_val[j]);
     }
-  }
-
-  if (threadIdx.x == 0 && bx >= 8) {
-    printf("666\n");
   }
 
   constexpr uint32_t iter_stride = BLOCK_SIZE / num_pack_per_thread; // 64 / 1 = 64
@@ -170,11 +159,6 @@ __global__ void QuantInt8Kernel_Varlen(T *__restrict__ input, T *__restrict__ me
     }
   }
 
-  if (threadIdx.x == 0 && bx >= 8) {
-    printf("777\n");
-  }
-
-
   __shared__ float s_amax;
   const float block_amax_val = sageattn::blockReduceMax(amax_val);
   if (thread_id == 0)
@@ -205,11 +189,6 @@ __global__ void QuantInt8Kernel_Varlen(T *__restrict__ input, T *__restrict__ me
     }
   }
 
-  if (threadIdx.x == 0 && bx >= 8) {
-    printf("888\n");
-  }
-
-
   // int8 result
   // float2 = 8 bytes = 8 x int8 elements
 #pragma unroll
@@ -220,11 +199,6 @@ __global__ void QuantInt8Kernel_Varlen(T *__restrict__ input, T *__restrict__ me
       *reinterpret_cast<float2*>(output_ptr_base + i * iter_stride * stride_seq_output) = *reinterpret_cast<float2*>(&o_val[i][0]);
     }
   }
-
-  if (threadIdx.x == 0 && bx >= 8) {
-    printf("999\n");
-  }
-
 }
 
 template <uint32_t head_dim, uint32_t CTA_SIZE, bool pad_zero=false, typename T>
@@ -458,7 +432,7 @@ void quant_per_block_int8_fuse_sub_mean_varlen_cuda_fwd(
                 paddle::Tensor& scale,  // bsz x num_heads x (total_seq_len + BLOCK_SIZE - 1) / BLOCK_SIZE
                 paddle::Tensor& cu_seqlen,
                 int max_seq_len_q,
-                int block_size)  // BLKK: 64
+                int block_size)  // BLKK: 128, for sm90
 {
   CHECK_CUDA(input);
   CHECK_CUDA(mean);
@@ -500,11 +474,11 @@ void quant_per_block_int8_fuse_sub_mean_varlen_cuda_fwd(
         CHECK_SHAPE(output, input.shape()[0], input.shape()[1], input.shape()[2]);
         CHECK_SHAPE(scale, batch_size, num_heads, (num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
-        dim3 grid((num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE, num_heads, batch_size);
+        dim3 grid((num_tokens + BLOCK_SIZE - 1) / BLOCK_SIZE, num_heads, batch_size); // (131+127) / 127, 2, 1
 
-        constexpr int num_pack_per_thread = (BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024;
+        constexpr int num_pack_per_thread = (BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024;  // (128*16 + 1023) / 1024 = (2048 + 1023) / 1024 = 2
 
-        dim3 block(BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
+        dim3 block(BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);  // 128 * 16 / 2 = 1024
 
         QuantInt8Kernel_Varlen<HEAD_DIM, BLOCK_SIZE, num_pack_per_thread, false, true, c_type><<<grid, block>>>(
           reinterpret_cast<c_type*>(input.data()),
@@ -571,12 +545,12 @@ void quant_per_warp_int8_varlen_cuda_fwd(
 
           dim3 block(WARP_BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
 
-          printf("Launch params: grid: (%d %d %d), num_threads: %d\n", grid.x, grid.y, grid.z, block.x);
-          printf("Block size: %d, Warp block size: %d\n", BLOCK_SIZE, WARP_BLOCK_SIZE);
+          // printf("Launch params: grid: (%d %d %d), num_threads: %d\n", grid.x, grid.y, grid.z, block.x);
+          // printf("Block size: %d, Warp block size: %d\n", BLOCK_SIZE, WARP_BLOCK_SIZE);
 
-          printf("Input shape: %d, %d, %d\n", input.shape()[0], input.shape()[1], input.shape()[2]);
+          // printf("Input shape: %d, %d, %d\n", input.shape()[0], input.shape()[1], input.shape()[2]);
 
-          printf("666 I am calling!\n");
+          // printf("666 I am calling!\n");
 
           QuantInt8Kernel_Varlen<HEAD_DIM, WARP_BLOCK_SIZE, num_pack_per_thread, false, false, c_type><<<grid, block>>>(
             reinterpret_cast<c_type*>(input.data()),
@@ -590,8 +564,6 @@ void quant_per_warp_int8_varlen_cuda_fwd(
             stride_seq_output, stride_h_output,
             scale.strides()[0], scale.strides()[1]
           );
-
-          printf("calling done!\n");
         });
       });
     });
