@@ -652,12 +652,17 @@ std::vector<paddle::Tensor> sage_attention_varlen_fwd(paddle::Tensor& q,        
   // v was padded, so we cannot use v for output shape
   paddle::Tensor o = paddle::empty(q.shape(), q.dtype(), paddle::GPUPlace()); // so far, the shape of v is not permutted and transposed. Still [total_seqlen, num_head, head_dim]
 
+  printf("\n\n===================\n\n");
+  printf("v shape: %d, %d, %d\n", v.shape()[0], v.shape()[1], v.shape()[2]);
+  printf("Total seqlen v padded: %d\n", total_seqlen_v_padded);
+  printf("max_seqlen_k: %d\n", max_seqlen_k);
+  printf("\n\n===================\n\n");
   std::vector<paddle::Tensor>&& quant_vfp8_results = per_channel_varlen_fp8(v, 
       cu_seqlen_v, 
       cu_seqlen_v_padded, 
       total_seqlen_v_padded, 
       max_seqlen_k, 
-      tensor_layout, 448.0, false);
+      tensor_layout, 448.0, smooth_v);
 
   qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm90_varlen_fwd(quant_qk_results[0], // q
     quant_qk_results[2],    // k
@@ -676,7 +681,7 @@ std::vector<paddle::Tensor> sage_attention_varlen_fwd(paddle::Tensor& q,        
     sm_scale, 
     _return_lse);
 
-  return {o, quant_vfp8_results[0], quant_vfp8_results[3]};
+  return {o, quant_qk_results[0], quant_qk_results[2], quant_vfp8_results[0], quant_vfp8_results[3]};
 }
 
 std::vector<std::vector<int64_t>> sage_attention_varlen_InferShape(
@@ -705,7 +710,7 @@ std::vector<paddle::DataType> sage_attention_varlen_InferDtype(
 
 PD_BUILD_OP(sage_attention_varlen2)
     .Inputs({"q", "k", "v", "cu_seqlen_q", "cu_seqlen_v", "cu_seqlen_v_padded", "segment_ids", paddle::Optional("vm")})
-    .Outputs({"o", "v_fp8_fused", "out2"})
+    .Outputs({"o", "q_int8", "k_int8", "v_fp8_fused", "out2"})
     .Attrs({"max_seqlen_q: int",
             "max_seqlen_k: int",
             "total_seqlen_v_padded: int",

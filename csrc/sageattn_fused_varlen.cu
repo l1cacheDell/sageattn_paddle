@@ -213,7 +213,7 @@ __global__ void TransposePadPermuteVarlenKernel(T *__restrict__ input,  // total
 
   constexpr uint32_t pack_size = 8; // float4 contains 8 half or 8 bfloat16
   uint32_t num_threads_per_token = head_dim / pack_size;  // 128 / 8 = 16 threads per token
-  uint32_t num_threads_per_cta = CTA_SIZE / pack_size;
+  uint32_t num_threads_per_cta = CTA_SIZE / pack_size;    // 64  / 8 = 8
 
   uint32_t bx = blockIdx.x;         // max_seq_len / 64
   uint32_t head_id = blockIdx.y;    
@@ -618,6 +618,9 @@ void transpose_pad_permute_varlen_cuda_fwd(
       static_assert(CTA_SIZE * HEAD_DIM <= 8192);
 
       dim3 block(CTA_SIZE * (HEAD_DIM / 8));    // 64 x (128 / 8) = 64 x 16 = 1024
+
+      printf("transpose params: grid: (%d %d %d), num_threads: %d\n", grid.x, grid.y, grid.z, block.x);
+      printf("stride_d_output: %d, stride_h_output: %d\n", stride_d_output, stride_h_output);
 
       TransposePadPermuteVarlenKernel<HEAD_DIM, CTA_SIZE, true, c_type><<<grid, block>>>(
         reinterpret_cast<c_type*>(input.data()),

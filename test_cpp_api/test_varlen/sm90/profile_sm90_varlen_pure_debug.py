@@ -71,17 +71,32 @@ head_dim = 128
 sm_scale = head_dim ** -0.5
 is_causal=True
 
-q = paddle.load("./sa_inputs/q.pdparams").astype(paddle.float16)
-k = paddle.load("./sa_inputs/k.pdparams").astype(paddle.float16)
-v_padded = paddle.load("./sa_inputs/padded_v.pdparams").astype(paddle.float16)
-cu_seqlen = paddle.load("./sa_inputs/cu_seqlen.pdparams").astype(paddle.float16)
-cu_seqlen_v_padded = paddle.load("./sa_inputs/cu_seqlen_v_padded.pdparams").astype(paddle.float16)
-km = paddle.load("./sa_inputs/km.pdparams").astype(paddle.float16)
+runtime_dtype = paddle.bfloat16
+# runtime_dtype = paddle.float16
+
+# q = paddle.load("./sa_inputs/q.pdparams").astype(runtime_dtype)
+# k = paddle.load("./sa_inputs/k.pdparams").astype(runtime_dtype)
+# v_padded = paddle.load("./sa_inputs/padded_v.pdparams").astype(runtime_dtype)
+# cu_seqlen = paddle.load("./sa_inputs/cu_seqlen.pdparams").astype(paddle.int32)
+# cu_seqlen_v_padded = paddle.load("./sa_inputs/cu_seqlen_v_padded.pdparams").astype(paddle.int32)
+# km = paddle.load("./sa_inputs/km.pdparams").astype(runtime_dtype)
+
+q = paddle.load("./inputs_2/q.pdparams").astype(paddle.bfloat16)
+k = paddle.load("./inputs_2/k.pdparams").astype(paddle.bfloat16)
+v_padded = paddle.load("./inputs_2/padded_v.pdparams").astype(paddle.bfloat16)
+cu_seqlen_q = paddle.load("./inputs_2/cu_seqlen_q.pdparams").astype(paddle.int32)
+cu_seqlen_k = paddle.load("./inputs_2/cu_seqlen_k.pdparams").astype(paddle.int32)
+cu_seqlen_v_padded = paddle.load("./inputs_2/cu_seqlen_v_padded.pdparams").astype(paddle.int32)
+km = paddle.load("./inputs_2/km.pdparams").astype(paddle.bfloat16)
 
 # q = paddle.randn(q.shape, dtype=paddle.float16)
 # k = paddle.randn(k.shape, dtype=paddle.float16)
 # v_padded = paddle.randn(v_padded.shape, dtype=paddle.float16)
-q = paddle.randn([131, 12, 128], paddle.float16)
+
+# =====================================================
+# if randomly generated tensor, then the code can run
+
+# q = paddle.randn([131, 12, 128], paddle.float16)
 # k = paddle.randn([131, 2, 128], paddle.float16)
 # v = paddle.randn([131, 2, 128], paddle.float16)
 
@@ -89,21 +104,23 @@ q = paddle.randn([131, 12, 128], paddle.float16)
 
 # v_padded, cu_seqlen_v_padded = pad_sequences_to_aligned_chunks(v, cu_seqlen, align_size=128)
 
-print(cu_seqlen)
-print(cu_seqlen_v_padded)
-print(cu_seqlen[-1].item())
-print(km.shape)
-print(q.shape)
-print(k.shape)
-print(v_padded.shape)
+# =====================================================
 
-for i in range(5):
+print(cu_seqlen_q)
+print(cu_seqlen_v_padded)
+print(cu_seqlen_q[-1].item())
+print(km.shape, km.dtype)
+print(q.shape, q.dtype)
+print(k.shape, k.dtype)
+print(v_padded.shape, v_padded.dtype)
+
+for i in range(15):
     print(f"epoch: {i}")
-    o1, vfp8_fused, v_transposed_fused = sageattn_custom_ops.sage_attention_varlen2(q, 
+    o1, q_int8, k_int8, vfp8_fused, v_transposed_fused = sageattn_custom_ops.sage_attention_varlen2(q, 
                                                 k, 
                                                 v_padded, 
-                                                cu_seqlen,
-                                                cu_seqlen,
+                                                cu_seqlen_q,
+                                                cu_seqlen_k,
                                                 cu_seqlen_v_padded,
                                                 km,
                                                 None,
@@ -119,6 +136,28 @@ for i in range(5):
                                                 smooth_v=False, 
                                                 return_lse=False)
     paddle.device.synchronize()
+
+    nan_mask = paddle.isnan(q_int8.astype(paddle.float16))
+    nan_indices = paddle.nonzero(nan_mask)
+    print(f"q_int8 nan indices: {nan_indices}")
+
+    nan_mask = paddle.isnan(k_int8.astype(paddle.float16))
+    nan_indices = paddle.nonzero(nan_mask)
+    print(f"k_int8 nan indices: {nan_indices}")
+
+    nan_mask = paddle.isnan(o1)
+    nan_indices = paddle.nonzero(nan_mask)
+    print(f"o1 nan indices: {nan_indices}")
+
+    nan_mask = paddle.isnan(vfp8_fused.astype(paddle.float16))
+    nan_indices = paddle.nonzero(nan_mask)
+    print(f"vfp8_fused nan indices: {nan_indices}")
+
+    nan_mask = paddle.isnan(v_transposed_fused.astype(paddle.float16))
+    nan_indices = paddle.nonzero(nan_mask)
+    print(f"v_transposed_fused nan indices: {nan_indices}")
+
+    breakpoint()
 
 paddle.device.synchronize()
 
@@ -148,29 +187,30 @@ paddle.device.synchronize()
 #     paddle.device.synchronize()
 #     nvtx.end_range(paddle_nvtx)
 
-sim, l1, max_diff = precision_cmp_paddle(o, o1)
-print(f"Total sim: {sim}, l1: {l1}, max_diff: {max_diff}")
+# =========== Compare diff zone ============
+# sim, l1, max_diff = precision_cmp_paddle(o, o1)
+# print(f"Total sim: {sim}, l1: {l1}, max_diff: {max_diff}")
 
-nan_mask = paddle.isnan((o - o1).astype(paddle.float32))
-nan_indices = paddle.nonzero(nan_mask)
-print(nan_indices)
-# 转为 NumPy
-nan_indices_np = nan_indices.numpy()
+# nan_mask = paddle.isnan((o - o1).astype(paddle.float32))
+# nan_indices = paddle.nonzero(nan_mask)
+# print(nan_indices)
+# # 转为 NumPy
+# nan_indices_np = nan_indices.numpy()
 
-nan_mask = paddle.isnan(o)
-nan_indices = paddle.nonzero(nan_mask)
-print(nan_indices)
-# 转为 NumPy
-nan_indices_np = nan_indices.numpy()
+# nan_mask = paddle.isnan(o)
+# nan_indices = paddle.nonzero(nan_mask)
+# print(nan_indices)
+# # 转为 NumPy
+# nan_indices_np = nan_indices.numpy()
 
-nan_mask = paddle.isnan(o1)
-nan_indices = paddle.nonzero(nan_mask)
-print(nan_indices)
-# 转为 NumPy
-nan_indices_np = nan_indices.numpy()
+# nan_mask = paddle.isnan(o1)
+# nan_indices = paddle.nonzero(nan_mask)
+# print(nan_indices)
+# # 转为 NumPy
+# nan_indices_np = nan_indices.numpy()
 
-# 保存为 txt 文件（整数格式）
-np.savetxt("nan_indices.txt", nan_indices_np, fmt="%d")
+# # 保存为 txt 文件（整数格式）
+# np.savetxt("nan_indices.txt", nan_indices_np, fmt="%d")
 
-# 打印保存的路径
-print("已保存 nan_indices 到 nan_indices.txt")
+# # 打印保存的路径
+# print("已保存 nan_indices 到 nan_indices.txt")
