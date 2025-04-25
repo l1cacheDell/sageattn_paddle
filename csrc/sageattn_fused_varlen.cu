@@ -550,8 +550,6 @@ void quant_per_warp_int8_varlen_cuda_fwd(
 
           // printf("Input shape: %d, %d, %d\n", input.shape()[0], input.shape()[1], input.shape()[2]);
 
-          // printf("666 I am calling!\n");
-
           QuantInt8Kernel_Varlen<HEAD_DIM, WARP_BLOCK_SIZE, num_pack_per_thread, false, false, c_type><<<grid, block>>>(
             reinterpret_cast<c_type*>(input.data()),
             nullptr,
@@ -618,9 +616,6 @@ void transpose_pad_permute_varlen_cuda_fwd(
       static_assert(CTA_SIZE * HEAD_DIM <= 8192);
 
       dim3 block(CTA_SIZE * (HEAD_DIM / 8));    // 64 x (128 / 8) = 64 x 16 = 1024
-
-      printf("transpose params: grid: (%d %d %d), num_threads: %d\n", grid.x, grid.y, grid.z, block.x);
-      printf("stride_d_output: %d, stride_h_output: %d\n", stride_d_output, stride_h_output);
 
       TransposePadPermuteVarlenKernel<HEAD_DIM, CTA_SIZE, true, c_type><<<grid, block>>>(
         reinterpret_cast<c_type*>(input.data()),
@@ -845,7 +840,8 @@ std::vector<paddle::Tensor> per_channel_varlen_fp8(paddle::Tensor& v,           
     // int padded_len = (kv_len + 63) / 64 * 64;
     PD_CHECK(padded_total_seq_len % 128 == 0 || padded_total_seq_len % 64 == 0, "v must be 64 or 128 padded");
 
-    paddle::Tensor v_transposed_permutted = paddle::empty({head_dim, h_kv, padded_total_seq_len}, v.dtype(), paddle::GPUPlace());
+    // IMPORTANT NOTICE: the transpose kernel may have bugs. Here we first declare an all-zeros tensor, instead of uninitialized `empty` tensor.
+    paddle::Tensor v_transposed_permutted = paddle::zeros({head_dim, h_kv, padded_total_seq_len}, v.dtype(), paddle::GPUPlace());
     
     transpose_pad_permute_varlen_cuda_fwd(v, v_transposed_permutted, 
                                           cu_seqlen_v, padded_cu_seqlen,

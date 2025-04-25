@@ -652,11 +652,6 @@ std::vector<paddle::Tensor> sage_attention_varlen_fwd(paddle::Tensor& q,        
   // v was padded, so we cannot use v for output shape
   paddle::Tensor o = paddle::empty(q.shape(), q.dtype(), paddle::GPUPlace()); // so far, the shape of v is not permutted and transposed. Still [total_seqlen, num_head, head_dim]
 
-  printf("\n\n===================\n\n");
-  printf("v shape: %d, %d, %d\n", v.shape()[0], v.shape()[1], v.shape()[2]);
-  printf("Total seqlen v padded: %d\n", total_seqlen_v_padded);
-  printf("max_seqlen_k: %d\n", max_seqlen_k);
-  printf("\n\n===================\n\n");
   std::vector<paddle::Tensor>&& quant_vfp8_results = per_channel_varlen_fp8(v, 
       cu_seqlen_v, 
       cu_seqlen_v_padded, 

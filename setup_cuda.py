@@ -145,7 +145,8 @@ print("=============================================")
 
 source_files = [
     'csrc/sageattn_fused.cu',
-    'csrc/sageattn_fused_varlen.cu'
+    'csrc/sageattn_fused_varlen.cu',
+    "csrc/segment_mean.cu"
 ]
 
 for capability in compute_capabilities:
