@@ -3,13 +3,15 @@
 #include <cuda_bf16.h>   // for __nv_bfloat16 and __nv_bfloat162 (bfloat16)
 #include <cub/cub.cuh>   // for CUB utilities (optional, e.g., for reductions)
 
+#define WARP_SIZE 32
+
 // CUDA kernel to compute segment-wise mean for input of type T (float16 or bfloat16).
 // `input` :       [num_head, head_dim, total_seqlen] (row-major layout).
 // `output_accum`: [batch_size, num_head,  head_dim] float buffer for accumulating means.
 // `cu_seqlens`: prefix-sum array of sequence lengths (batch_size+1).
 // equasion: CHUNK_SIZE = NUM_THREADS * ITEMS_PER_THREAD
 
-#define WARP_SIZE 32
+
 
 // each block will process one chunk of all head_dim, in one num_head.
 template<typename T, uint32_t NUM_HTREADS, uint32_t CHUNK_SIZE, uint32_t ITEMS_PER_THREAD, uint32_t HEAD_DIM>
@@ -25,65 +27,44 @@ __global__ void SegmentMeanKernel(T* __restrict__ input,
     const int bx = blockIdx.x;      // chunk_id
     const int head_id = blockIdx.y;
     const int batch_id = blockIdx.z;
-    const int tid = threadIdx.x;
+    const int tx = threadIdx.x;     // either 8   or 16
+    const int dim_id = threadIdx.y; // either 128 or 64
+
+    constexpr int NUM_THREADS_PER_DIM = blockDim.x; // 8 or 16
+
     const uint32_t seqlen_this_time = cu_seqlens[batch_id + 1] - cu_seqlens[batch_id];
 
-    const int start_pos = bx * CHUNK_SIZE;
-    if (start_pos >= seqlen_this_time) return;
+    const int block_start_pos = bx * CHUNK_SIZE;
+    if (block_start_pos >= seqlen_this_time) return;
 
     const int block_num_this_seq = (seqlen_this_time + CHUNK_SIZE - 1) / CHUNK_SIZE;
     
-    const int chunk_len_this_time = min(CHUNK_SIZE, seqlen_this_time - start_pos);
+    const int chunk_len_this_time = min(CHUNK_SIZE, seqlen_this_time - block_start_pos);
 
     // the head_dim can either be 64 or 128.
     __shared__ T mean_save[HEAD_DIM];     // why not store them in a warp-primitives?
 
-    // every block, will process one chunk of each dim.
-    for (int dim_id = 0; dim_id < HEAD_DIM; dim_id++) {
-        using BlockLoad = cub::BlockLoad<T, NUM_HTREADS, ITEMS_PER_THREAD, cub::BLOCK_LOAD_VECTORIZE>;
-        __shared__ typename BlockLoad::TempStorage temp_storage_load;
-
-        T loaded_data[ITEMS_PER_THREAD];
-
-        T* input_idx = input + head_id * stride_i_h + dim_id * stride_i_d + cu_seqlens[batch_id] + start_pos;
-        BlockLoad(temp_storage_load).Load(input_idx, loaded_data, chunk_len_this_time);    // valid items to load -> chunk_len_this_time
-
-        // reduce sum, due to the `chunk_len_this_time` limitation, one thread compute one element
-        // see https://nvidia.github.io/cccl/cub/api/classcub_1_1BlockReduce.html#_CPPv4N3cub11BlockReduce3SumE1Ti for details
-        using BlockReduce = cub::BlockReduce<T, NUM_HTREADS>;
-        __shared__ typename BlockReduce::TempStorage temp_storage_reduce;
-
-        T sum = T(0);
-        for (int item_id = 0; item_id < ITEMS_PER_THREAD; item_id++) {
-            T thread_data = ITEMS_PER_THREAD * tid < chunk_len_this_time ? loaded_data[item_id] : T(0);
-            T sum_epoch = BlockReduce(temp_storage_reduce).Sum(thread_data, chunk_len_this_time);
-            if (tid == 0) sum += sum_epoch;
-        }
-            
-        if (threadIdx.x == 0) {
-            mean_save[dim_id] = __hdiv(__hdiv(sum, T(chunk_len_this_time)), T(block_num_this_seq));   // online: div by block_num_this_seq in advance.
-            __syncthreads();
-        }
-    }
+   
     
     // store the mean value to output. This operation can be online.
     constexpr int items_per_thread = HEAD_DIM / WARP_SIZE;   // can either be 2 or 4
     int warp_id = tid / WARP_SIZE;
+    int lane_id = tid % WARP_SIZE;
     if (warp_id == 0) {
         T temp_store[items_per_thread];
-        T* output_idx = output + batch_id * stride_o_seqlen + head_id * stride_o_h + tid * items_per_thread;
+        T* output_idx = output + batch_id * stride_o_seqlen + head_id * stride_o_h + lane_id * items_per_thread;    // [bsz, num_head, head_dim]
         if constexpr (items_per_thread == 2) {
-            ((float*)(temp_store))[0] = ((float*)(output_idx))[0]; // read
+            *(float*)(&temp_store[0]) = *(float*)(output_idx); // load
             temp_store[0] += mean_save[tid * 2];
             temp_store[1] += mean_save[tid * 2 + 1];
-            ((float*)(output_idx))[0] = ((float*)(temp_store))[0];  // store
+            *(float*)(output_idx) = *(float*)(&temp_store[0]);  // store
         } else {
-            ((float2*)(temp_store))[0] = ((float2*)(output_idx))[0]; // read
+            *(float2*)(&temp_store[0]) = *(float2*)(output_idx); // load
             temp_store[0] += mean_save[tid * 4];
             temp_store[1] += mean_save[tid * 4 + 1];
             temp_store[2] += mean_save[tid * 4 + 2];
             temp_store[3] += mean_save[tid * 4 + 3];
-            ((float2*)(output_idx))[0] = ((float2*)(temp_store))[0];  // store
+            *(float2*)(output_idx) = *(float2*)(&temp_store[0]);  // store
         }
     }
 }
@@ -106,18 +87,18 @@ std::vector<paddle::Tensor> chunked_segment_mean_fwd(paddle::Tensor& input,     
     paddle::Tensor output = paddle::zeros({batch_size, input.shape()[1], input.shape()[2]}, input.dtype(), paddle::GPUPlace());
 
     DISPATCH_PADDLE_DTYPE_TO_CTYPE_FP16(input.dtype(), c_type, {
-        DISPATCH_HEAD_DIM_QK(head_dim, HEAD_DIM ,{
+        DISPATCH_HEAD_DIM_QK(head_dim, HEAD_DIM , {
             constexpr int NUM_THREADS = 1024;
-            constexpr int ITEMS_PER_THREAD = 4;
-            constexpr int CHUNK_SIZE = NUM_THREADS * ITEMS_PER_THREAD;
+            constexpr int CHUNK_SIZE = 4096;
+            constexpr int ITEMS_PER_THREAD = int(CHUNK_SIZE / (NUM_THREADS / HEAD_DIM));    // either 512 or 256
 
             dim3 grid((max_seqlen + CHUNK_SIZE - 1) / CHUNK_SIZE, num_head, batch_size);
-            dim3 block(NUM_THREADS);
+            dim3 block(int(NUM_THREADS / HEAD_DIM), HEAD_DIM);
 
             SegmentMeanKernel<c_type, NUM_THREADS, CHUNK_SIZE, ITEMS_PER_THREAD, HEAD_DIM><<<grid, block>>>(
-                reinterpret_cast<c_type*>(input_transposed.data()),
-                reinterpret_cast<c_type*>(output.data()),
-                reinterpret_cast<uint32_t*>(output.data()),
+                reinterpret_cast<c_type*>(input_transposed.data()),     // [num_head, head_dim, total_seqlen]
+                reinterpret_cast<c_type*>(output.data()),               // [batch_size, num_head, head_dim]
+                reinterpret_cast<uint32_t*>(cu_seqlens.data()),
                 input_transposed.strides()[0], input_transposed.strides()[1], 
                 output.strides()[0], output.strides()[1],
                 batch_size

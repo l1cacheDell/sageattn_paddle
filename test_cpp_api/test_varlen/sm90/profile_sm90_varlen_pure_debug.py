@@ -157,7 +157,6 @@ for i in range(15):
     nan_indices = paddle.nonzero(nan_mask)
     print(f"v_transposed_fused nan indices: {nan_indices}")
 
-    breakpoint()
 
 paddle.device.synchronize()
 

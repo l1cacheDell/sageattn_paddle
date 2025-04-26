@@ -24,7 +24,7 @@ k = paddle.randn([131, num_head, head_dim], dtype=paddle.float16)
 cu_seqlen = paddle.to_tensor([0, 131], paddle.int32)
 
 km1 = segment_mean(k, cu_seqlen)
-km2 = sageattn_custom_ops.chunked_segment_mean(k, cu_seqlen)
+km2 = sageattn_custom_ops.chunked_segment_mean(k, cu_seqlen, 131)
 
 sim, l1, max_diff = precision_cmp_paddle(km1, km2)
 print(f"sim: {sim}, l1: {l1}, max_diff: {max_diff}")
