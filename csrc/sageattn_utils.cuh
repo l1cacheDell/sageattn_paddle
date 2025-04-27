@@ -73,6 +73,25 @@
     throw std::invalid_argument(err_msg.str());                 \
   }
 
+#define DISPATCH_KV_HEAD(num_head, NUM_HEAD, ...)               \
+  if (num_head == 1) {                                          \
+    constexpr int NUM_HEAD = 1;                                 \
+    __VA_ARGS__                                                 \
+  } else if (num_head == 2) {                                   \
+    constexpr int NUM_HEAD = 2;                                 \
+    __VA_ARGS__                                                 \
+  } else if (num_head == 4) {                                   \
+    constexpr int NUM_HEAD = 4;                                 \
+    __VA_ARGS__                                                 \
+  } else if (num_head == 8) {                                   \
+    constexpr int NUM_HEAD = 8;                                 \
+    __VA_ARGS__                                                 \
+  } else {                                                      \
+    std::ostringstream err_msg;                                 \
+    err_msg << "Unsupported kv_head: " << int(num_head);        \
+    throw std::invalid_argument(err_msg.str());                 \
+  }
+
 #define DISPATCH_CAUSAL(is_causal, IS_CAUSAL, ...)              \
   if (is_causal == 1) {                                         \
     constexpr bool IS_CAUSAL = true;                            \
