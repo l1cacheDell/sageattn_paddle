@@ -98,6 +98,10 @@ __global__ void QuantInt8Kernel_Varlen(T *__restrict__ input, T *__restrict__ me
   if constexpr (sub_mean)
   {
     *(float4*)(&mean_val[0]) = *(float4*)(mean_ptr_base); // 8 elements
+// #pragma unroll
+//     for (int i = 0; i < 8; i++) {
+//       mean_val[i] = mean_ptr_base[i];
+//     }
 #pragma unroll
     for (uint32_t j = 0; j < 8; j++)
     {
@@ -113,6 +117,10 @@ __global__ void QuantInt8Kernel_Varlen(T *__restrict__ input, T *__restrict__ me
     if (thread_base_token + i * iter_stride < num_tokens)
     {
       *(float4*)(&x_val[i][0]) = *(float4*)(input_ptr_base + i * iter_stride * stride_seq_input);
+// #pragma unroll
+//       for (int j = 0; j < 8; j++) {
+//         x_val[i][j] = input_ptr_base[i * iter_stride * stride_seq_input + j];
+//       }
 #pragma unroll
       for (uint32_t j = 0; j < 8; j++)
       {
@@ -345,6 +353,10 @@ __global__ void MeanScaleVarlenKernel(T *__restrict__ input,  // [head_dim, num_
   for (int i = 0; i < num_iters; i++)
   {
     *(float4*)(&x_val[0]) = *(float4*)(input_ptr_base + i * gmem_stride);
+// #pragma unroll
+//     for (int j = 0; j < 8; j++) {
+//       x_val[j] = input_ptr_base[i * gmem_stride + j];
+//     }
 #pragma unroll
     for (uint32_t j = 0; j < 8; j++)
     {
@@ -401,6 +413,10 @@ __global__ void MeanScaleVarlenKernel(T *__restrict__ input,  // [head_dim, num_
   for (int i = 0; i < num_iters; i++)
   {
     *(float4*)(&x_val[0]) = *(float4*)(input_ptr_base + i * gmem_stride);
+// #pragma unroll
+//     for (int j = 0; j < 8; j++) {
+//       x_val[j] = input_ptr_base[i * gmem_stride + j];
+//     }
 #pragma unroll
     for (uint32_t j = 0; j < 8; j++)
     {

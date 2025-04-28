@@ -1653,7 +1653,7 @@ std::vector<paddle::Tensor> sage_attention_fwd(paddle::Tensor& q,
     }
   }
 
-  return {o};
+  return {o, quant_qk_results[0], quant_qk_results[2], quant_vfp8_results[0]};
 }
 
 std::vector<std::vector<int64_t>> sage_attention_InferShape(
@@ -1662,7 +1662,7 @@ std::vector<std::vector<int64_t>> sage_attention_InferShape(
   const std::vector<int64_t> value_shape,
   const std::vector<int64_t> km_shape,
   const paddle::optional<std::vector<int64_t>>& vm_shape) {
-    return {value_shape};
+    return {query_shape, query_shape, query_shape, value_shape};
 }
 
 std::vector<paddle::DataType> sage_attention_InferDtype(
@@ -1671,12 +1671,12 @@ std::vector<paddle::DataType> sage_attention_InferDtype(
   const paddle::DataType C_dtype,
   const paddle::DataType D_dtype,
   const paddle::optional<paddle::DataType>& E_dtype) {
-  return {C_dtype};
+  return {C_dtype, paddle::DataType::INT8, paddle::DataType::INT8, paddle::DataType::FLOAT8_E4M3FN};
 }
 
 PD_BUILD_OP(sage_attention)
     .Inputs({"q", "k", "v", "km", paddle::Optional("vm")})
-    .Outputs({"o"})
+    .Outputs({"o", "q_int8", "k_int8", "v_fp8"})
     .Attrs({"sm_scale: float",
             "qk_quant_gran: std::string",
             "pv_accum_dtype: std::string",

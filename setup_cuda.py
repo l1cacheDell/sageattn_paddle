@@ -33,7 +33,6 @@ NVCC_FLAGS = [
     "--threads=8",
     "-Xptxas=-v",
     "-diag-suppress=174", # suppress the specific warning
-    # "-O0",
     # "-G",        # very important notice: you should turn this button off, when finish debuging
     # "-g"
 ]

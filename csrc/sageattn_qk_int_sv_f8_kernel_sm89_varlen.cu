@@ -104,17 +104,17 @@ __global__ void qk_int_sv_f8_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t *
 
   if constexpr (K_GRAN == QuantGranularity::kPerBlock)
   {
-    const uint32_t num_block_k = div_ceil(kv_len, CTA_K);
+    const uint32_t num_block_k = div_ceil(kv_len, CTA_K);  // do not replace kv_len -> bz_seqlen here! Scale shape is determinated by former quant code.
     k_scale_idx = batch_id * (num_qo_heads / num_kv_groups) * num_block_k + (head_id / num_kv_groups) * num_block_k;
   }
   else if constexpr (K_GRAN == QuantGranularity::kPerWarp)
   {
-    const uint32_t num_warp_block_k = div_ceil(kv_len, CTA_K) * (CTA_K / WARP_K);
+    const uint32_t num_warp_block_k = div_ceil(kv_len, CTA_K) * (CTA_K / WARP_K);  // do not replace kv_len -> bz_seqlen here!
     k_scale_idx = batch_id * (num_qo_heads / num_kv_groups) * num_warp_block_k + (head_id / num_kv_groups) * num_warp_block_k + get_warp_idx_k<num_warps_q, num_warps_k>();
   }
   else if constexpr (K_GRAN == QuantGranularity::kPerThread)
   {
-    const uint32_t num_warp_block_k = div_ceil(kv_len, CTA_K) * (CTA_K / WARP_K);
+    const uint32_t num_warp_block_k = div_ceil(kv_len, CTA_K) * (CTA_K / WARP_K);  // do not replace kv_len -> bz_seqlen here!
     k_scale_idx = batch_id * (num_qo_heads / num_kv_groups) * (num_warp_block_k * 4) + (head_id / num_kv_groups) * (num_warp_block_k * 4) + get_warp_idx_k<num_warps_q, num_warps_k>() * 4 + lane_id % 4;
   }
 
@@ -222,15 +222,16 @@ __global__ void qk_int_sv_f8_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t *
   uint32_t Q_load_idx_lane_base = bx * CTA_Q + CTA_Q / num_warps * warp_id + lane_id / global_to_shared_line_lanes_QK;
   uint32_t K_load_idx_lane_base = CTA_K / num_warps * warp_id + lane_id / global_to_shared_line_lanes_QK;
 
+  // do we need to replace this kv_len -> bz_seqlen?
   const uint32_t num_iterations = div_ceil(
       mask_mode == MaskMode::kCausal
-          ? min(kv_len, (bx + 1) * CTA_Q)
-          : kv_len,
+          ? min(bz_seqlen, (bx + 1) * CTA_Q)
+          : bz_seqlen,
       CTA_K);
 
   // load Q with predicate
   load_global_to_share<global_to_shared_line_lanes_QK, global_to_shared_copy_lines_per_warp_QK, QK_smem_iters_row, Q_smem_iters_col, swizzle_mode_QK, QK_SMEM_STRIDE / PACK_SIZE_QK, CTA_Q>(
-    &Q_lane_base_ptr, Q_smem_offset_load, stride_seq_q, smem_Q, Q_load_idx_lane_base, qo_len);
+    &Q_lane_base_ptr, Q_smem_offset_load, stride_seq_q, smem_Q, Q_load_idx_lane_base, bz_seqlen); // notice: replace qo_len -> bz_seqlen
   cp_async::commit_group();
   cp_async::wait_group<0>();
   __syncthreads();
@@ -249,7 +250,7 @@ __global__ void qk_int_sv_f8_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t *
 
   // load K with predicate
   load_global_to_share<global_to_shared_line_lanes_QK, global_to_shared_copy_lines_per_warp_QK, QK_smem_iters_row, K_smem_iters_col, swizzle_mode_QK, QK_SMEM_STRIDE / PACK_SIZE_QK, CTA_K>(
-    &K_lane_base_ptr, K_smem_offset_load, stride_seq_k, smem_K, K_load_idx_lane_base, kv_len);
+    &K_lane_base_ptr, K_smem_offset_load, stride_seq_k, smem_K, K_load_idx_lane_base, bz_seqlen); // notice: replace kv_len -> bz_seqlen
   cp_async::commit_group();
 
   float q_scale = Q_scale[q_scale_idx];
@@ -433,7 +434,7 @@ __global__ void qk_int_sv_f8_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t *
 
     // load K with predicate
     load_global_to_share<global_to_shared_line_lanes_QK, global_to_shared_copy_lines_per_warp_QK, QK_smem_iters_row, K_smem_iters_col, swizzle_mode_QK, QK_SMEM_STRIDE / PACK_SIZE_QK, CTA_K>(
-      &K_lane_base_ptr, K_smem_offset_load, stride_seq_k, smem_K, K_load_idx_lane_base, kv_len);
+      &K_lane_base_ptr, K_smem_offset_load, stride_seq_k, smem_K, K_load_idx_lane_base, bz_seqlen); // replace kv_len -> bz_seqlen
     cp_async::commit_group();
 
     dequant_scale = q_scale * K_scale[k_scale_idx + (num_iterations - 1) * k_scale_advance_offset];
@@ -505,7 +506,7 @@ __global__ void qk_int_sv_f8_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t *
     {
       apply_causal_mask<num_tiles_q, num_tiles_k>(Q_idx_lane_base, K_idx_lane_base, RS_f32);
     }
-    apply_out_of_bound_mask<num_tiles_q, num_tiles_k>(K_idx_lane_base, RS_f32, kv_len);
+    apply_out_of_bound_mask<num_tiles_q, num_tiles_k>(K_idx_lane_base, RS_f32, bz_seqlen);  // replace kv_len -> bz_seqlen
     K_idx_lane_base += CTA_K;
 
     if constexpr (std::is_same<DTypeSVAccum, float>::value)
@@ -985,8 +986,7 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_s
             //                                     smem_Q                                     smem_K                            smem_V                     smem_O
             size_t smem_max = std::max(CTA_Q * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t) + CTA_K * HEAD_DIM * sizeof(int8_t), CTA_Q * HEAD_DIM * sizeof(half));
             
-            auto kernel_func = qk_int_sv_f8_attn_varlen_kernel<CTA_Q, CTA_K, WARP_Q, WARP_K, HEAD_DIM, SADataType::kInt8, static_cast<QuantGranularity>(QK_QUANT_GRAN), static_cast<QuantGranularity>(QK_QUANT_GRAN),
-                                                        float, true, DTypeOut, ComputeUnit::kCudaCore, mask_mode, RETURN_LSE, true, false>;
+            auto kernel_func = qk_int_sv_f8_attn_varlen_kernel<CTA_Q, CTA_K, WARP_Q, WARP_K, HEAD_DIM, SADataType::kInt8, static_cast<QuantGranularity>(QK_QUANT_GRAN), static_cast<QuantGranularity>(QK_QUANT_GRAN), float, true, DTypeOut, ComputeUnit::kCudaCore, mask_mode, RETURN_LSE, true, false>;
 
             cudaFuncSetAttribute(kernel_func, cudaFuncAttributeMaxDynamicSharedMemorySize, smem_max);
 
@@ -1095,7 +1095,7 @@ std::vector<paddle::Tensor> sage_attention_varlen_fwd(paddle::Tensor& q,        
     }
   }
 
-  return {o};
+  return {o, quant_qk_results[0], quant_qk_results[2], quant_vfp8_results[0]};
 }
 
 std::vector<std::vector<int64_t>> sage_attention_varlen_InferShape(
@@ -1107,7 +1107,7 @@ std::vector<std::vector<int64_t>> sage_attention_varlen_InferShape(
   const std::vector<int64_t> cu_seqlen_v_padded_shape,
   const std::vector<int64_t> km_shape,
   const paddle::optional<std::vector<int64_t>>& vm_shape) {
-    return {query_shape};
+    return {query_shape, query_shape, query_shape, value_shape};
 }
 
 std::vector<paddle::DataType> sage_attention_varlen_InferDtype(
@@ -1119,12 +1119,12 @@ std::vector<paddle::DataType> sage_attention_varlen_InferDtype(
   const paddle::DataType F_dtype,
   const paddle::DataType G_dtype,
   const paddle::optional<paddle::DataType>& H_dtype) {
-  return {C_dtype};
+  return {C_dtype, paddle::DataType::INT8, paddle::DataType::INT8, paddle::DataType::FLOAT8_E4M3FN};
 }
 
 PD_BUILD_OP(sage_attention_varlen)
     .Inputs({"q", "k", "v", "cu_seqlen_q", "cu_seqlen_v", "cu_seqlen_v_padded", "km", paddle::Optional("vm")})
-    .Outputs({"o"})
+    .Outputs({"o", "q_int8", "k_int8", "v_fp8"})
     .Attrs({"max_seqlen_q: int",
             "max_seqlen_k: int",
             "total_seqlen_v_padded: int",
