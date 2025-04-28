@@ -749,7 +749,7 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_varlen_fwd
   CHECK_DIMS(key_scale, 3);
   CHECK_DIMS(value_scale, 3);
 
-  const int batch_size = query.shape()[0];
+  const int batch_size = cu_seqlen_q.shape()[0] - 1;
   const int head_dim = query.shape()[2];
 
   int qo_len, kv_len, num_qo_heads, num_kv_heads;
@@ -800,8 +800,7 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_varlen_fwd
             constexpr int WARP_Q = 32;
             constexpr int WARP_K = 64;
 
-            assert(value.shape()[0] == batch_size);
-            assert(value.shape()[3] >= div_ceil(kv_len, CTA_K) * CTA_K);
+            assert(value.shape()[2] >= div_ceil(kv_len, CTA_K) * CTA_K);
 
             constexpr MaskMode mask_mode = IS_CAUSAL ? MaskMode::kCausal : MaskMode::kNone;
 
@@ -911,7 +910,7 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_s
   CHECK_DIMS(key_scale, 3);
   CHECK_DIMS(value_scale, 3);
 
-  const int batch_size = query.shape()[0];
+  const int batch_size = cu_seqlen_q.shape()[0] - 1;
   const int head_dim = query.shape()[2];
 
   int qo_len, kv_len, num_qo_heads, num_kv_heads;
@@ -962,8 +961,7 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_s
             constexpr int WARP_Q = 32;
             constexpr int WARP_K = 64;
 
-            assert(value.shape()[0] == batch_size);
-            assert(value.shape()[3] >= div_ceil(kv_len, CTA_K) * CTA_K);
+            assert(value.shape()[2] >= div_ceil(kv_len, CTA_K) * CTA_K);
 
             constexpr MaskMode mask_mode = IS_CAUSAL ? MaskMode::kCausal : MaskMode::kNone;
 
@@ -1052,7 +1050,7 @@ std::vector<paddle::Tensor> sage_attention_varlen_fwd(paddle::Tensor& q,        
   int _qk_quant_gran = (qk_quant_gran == std::string("per_thread")) ? 3 : 2;
   int _return_lse = int(return_lse);
 
-  PD_CHECK(pv_accum_dtype == std::string("fp32+fp32") || pv_accum_dtype == std::string("fp32"), "pv_accum_dtype must be either fp32 or fp32+fp32");
+  PD_CHECK(pv_accum_dtype == std::string("fp32+fp32") || pv_accum_dtype == std::string("fp32") || pv_accum_dtype == std::string("any"), "pv_accum_dtype must be either fp32 or fp32+fp32");
   auto pv_accum_dtype_const = (pv_accum_dtype == std::string("fp32+fp32")) ? paddle::DataType::UNDEFINED : paddle::DataType::FLOAT32;
 
   PD_CHECK(q.shape()[2] == 64 || q.shape()[2] == 128, "head_dim must be either 64 or 128");
@@ -1064,7 +1062,7 @@ std::vector<paddle::Tensor> sage_attention_varlen_fwd(paddle::Tensor& q,        
   constexpr int BLKK = 64;
   std::vector<paddle::Tensor>&& quant_qk_results = per_warp_int8_varlen_cuda_fwd(q, k, cu_seqlen_q, km, max_seqlen_q, max_seqlen_k, BLKQ, WARPQ, BLKK); // q_int8, q_scale, k_int8, k_scale
 
-  paddle::Tensor o = paddle::empty(v.shape(), v.dtype(), paddle::GPUPlace());
+  paddle::Tensor o = paddle::empty(q.shape(), q.dtype(), paddle::GPUPlace());
 
   if (pv_accum_dtype_const == paddle::DataType::UNDEFINED) {
     if (smooth_v) smooth_v = false;

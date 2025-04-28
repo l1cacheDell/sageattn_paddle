@@ -503,8 +503,8 @@ void quant_per_warp_int8_varlen_cuda_fwd(
                 paddle::Tensor& scale,  // bsz x num_head x max_seq_len
                 paddle::Tensor& cu_seqlen_q,
                 int max_seq_len_q,
-                int block_size,     // BLKQ: 64
-                int warp_block_size) // WARPQ: 16
+                int block_size,     // BLKQ: 128
+                int warp_block_size) // WARPQ: 32
 {
   CHECK_CUDA(input);
   CHECK_CUDA(output);
@@ -544,11 +544,6 @@ void quant_per_warp_int8_varlen_cuda_fwd(
           constexpr int num_pack_per_thread = (WARP_BLOCK_SIZE * (HEAD_DIM / 8) + 1023) / 1024; // 1
 
           dim3 block(WARP_BLOCK_SIZE * (HEAD_DIM / 8) / num_pack_per_thread);
-
-          // printf("Launch params: grid: (%d %d %d), num_threads: %d\n", grid.x, grid.y, grid.z, block.x);
-          // printf("Block size: %d, Warp block size: %d\n", BLOCK_SIZE, WARP_BLOCK_SIZE);
-
-          // printf("Input shape: %d, %d, %d\n", input.shape()[0], input.shape()[1], input.shape()[2]);
 
           QuantInt8Kernel_Varlen<HEAD_DIM, WARP_BLOCK_SIZE, num_pack_per_thread, false, false, c_type><<<grid, block>>>(
             reinterpret_cast<c_type*>(input.data()),

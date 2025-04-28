@@ -33,9 +33,9 @@ NVCC_FLAGS = [
     "--threads=8",
     "-Xptxas=-v",
     "-diag-suppress=174", # suppress the specific warning
-    "-O0",
-    "-G",        # very important notice: you should turn this button off, when finish debuging
-    "-g"
+    # "-O0",
+    # "-G",        # very important notice: you should turn this button off, when finish debuging
+    # "-g"
 ]
 
 ABI = 1
@@ -109,9 +109,6 @@ if not compute_capabilities:
             raise RuntimeError(
                 "GPUs with compute capability below 8.0 are not supported.")
         compute_capabilities.add(f"{major}.{minor}")
-
-compute_capabilities = ["9.0"]  # force
-# compute_capabilities = ["8.9"]  # force
 
 print(f"compute_capabilities: {compute_capabilities}")
 nvcc_cuda_version = get_nvcc_cuda_version(CUDA_HOME)
