@@ -657,11 +657,13 @@ __global__ void qk_int_sv_f8_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t *
 
   // shared memory to global memory
   DTypeOut *O_lane_ptr = O + 
-                         batch_id * stride_bz_o + 
+                         cu_seqlen[batch_id] * stride_seq_o + 
                          head_id * stride_h_o + 
                          (bx * CTA_Q + WARP_Q * get_warp_idx_q<num_warps_q, num_warps_k>() + lane_id / global_to_shared_line_lanes_O) * stride_seq_o + 
                          lane_id % global_to_shared_line_lanes_O * PACK_SIZE_O;
+
   uint32_t offset_O = smem_O.get_permuted_offset(get_warp_idx_q<num_warps_q, num_warps_k>() * WARP_Q + lane_id / global_to_shared_line_lanes_O, lane_id % global_to_shared_line_lanes_O);
+
   uint32_t O_load_idx_lane_base = bx * CTA_Q + CTA_Q / num_warps * warp_id + lane_id / global_to_shared_line_lanes_O;
 
 #pragma unroll
@@ -748,7 +750,7 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_varlen_fwd
   CHECK_DIMS(value_scale, 3);
 
   const int batch_size = query.shape()[0];
-  const int head_dim = query.shape()[3];
+  const int head_dim = query.shape()[2];
 
   int qo_len, kv_len, num_qo_heads, num_kv_heads;
   int stride_seq_q, stride_h_q, stride_seq_k, stride_h_k, stride_h_v, stride_d_v, stride_seq_o, stride_h_o;
@@ -868,6 +870,10 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_s
                     paddle::Tensor& query_scale,
                     paddle::Tensor& key_scale,
                     paddle::Tensor& value_scale,
+                    paddle::Tensor& cu_seqlen_q,
+                    paddle::Tensor& cu_seqlen_v_padded,
+                    int max_seqlen_q,
+                    int max_seqlen_k,
                     int tensor_layout,
                     int is_causal,
                     int qk_quant_gran,
@@ -897,67 +903,37 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_s
   CHECK_DTYPE(key_scale, paddle::DataType::FLOAT32);
   CHECK_DTYPE(value_scale, paddle::DataType::FLOAT32);
 
-  CHECK_DIMS(query, 4);
-  CHECK_DIMS(key, 4);
-  CHECK_DIMS(value, 4);
-  CHECK_DIMS(output, 4);
+  CHECK_DIMS(query, 3); // total_seqlen, num_heads, head_dim
+  CHECK_DIMS(key, 3);
+  CHECK_DIMS(value, 3);
+  CHECK_DIMS(output, 3);
   CHECK_DIMS(query_scale, 3);
   CHECK_DIMS(key_scale, 3);
   CHECK_DIMS(value_scale, 3);
 
   const int batch_size = query.shape()[0];
-  const int head_dim = query.shape()[3];
-
-  int stride_bz_q = query.strides()[0];
-  int stride_bz_k = key.strides()[0];
-  int stride_bz_v = value.strides()[0];
-  int stride_bz_o = output.strides()[0];
+  const int head_dim = query.shape()[2];
 
   int qo_len, kv_len, num_qo_heads, num_kv_heads;
   int stride_seq_q, stride_h_q, stride_seq_k, stride_h_k, stride_h_v, stride_d_v, stride_seq_o, stride_h_o;
 
-  if (tensor_layout == 0)
-  {
-    qo_len = query.shape()[1];
-    kv_len = key.shape()[1];
-    num_qo_heads = query.shape()[2];
-    num_kv_heads = key.shape()[2];
+  qo_len = max_seqlen_q;
+  kv_len = max_seqlen_k;
 
-    stride_seq_q = query.strides()[1];
-    stride_h_q = query.strides()[2];
-    stride_seq_k = key.strides()[1];
-    stride_h_k = key.strides()[2];
-    stride_h_v = value.strides()[2];
-    stride_d_v = value.strides()[1];
-    stride_seq_o = output.strides()[1];
-    stride_h_o = output.strides()[2];
+  num_qo_heads = query.shape()[1];
+  num_kv_heads = key.shape()[1];
 
-    CHECK_SHAPE(key, batch_size, kv_len, num_kv_heads, head_dim);
-    CHECK_SHAPE(output, batch_size, qo_len, num_qo_heads, head_dim);
-    assert(value.shape()[1] == head_dim);
-    assert(value.shape()[2] == num_kv_heads);
-  }
-  else
-  {
-    qo_len = query.shape()[2];
-    kv_len = key.shape()[2];
-    num_qo_heads = query.shape()[1];
-    num_kv_heads = key.shape()[1];
+  stride_seq_q = query.strides()[0];
+  stride_h_q = query.strides()[1];
 
-    stride_seq_q = query.strides()[2];
-    stride_h_q = query.strides()[1];
-    stride_seq_k = key.strides()[2];
-    stride_h_k = key.strides()[1];
-    stride_h_v = value.strides()[1];
-    stride_d_v = value.strides()[2];
-    stride_seq_o = output.strides()[2];
-    stride_h_o = output.strides()[1];
+  stride_seq_k = key.strides()[0];
+  stride_h_k = key.strides()[1];
 
-    CHECK_SHAPE(key, batch_size, num_kv_heads, kv_len, head_dim);
-    CHECK_SHAPE(output, batch_size, num_qo_heads, qo_len, head_dim);
-    assert(value.shape()[2] == head_dim);
-    assert(value.shape()[1] == num_kv_heads);
-  }
+  stride_h_v = value.strides()[1];
+  stride_d_v = value.strides()[0];  // [head_dim, num_head, total_seqlen]
+
+  stride_seq_o = output.strides()[0];
+  stride_h_o = output.strides()[1];
 
   if (num_qo_heads % num_kv_heads != 0) {
     std::ostringstream err_msg;
@@ -1029,13 +1005,15 @@ std::vector<paddle::Tensor> qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_s
               reinterpret_cast<float*>(key_scale.data()),
               reinterpret_cast<float*>(value_scale.data()),
               nullptr,
+              reinterpret_cast<uint32_t*>(cu_seqlen_q.data()),
+              reinterpret_cast<uint32_t*>(cu_seqlen_v_padded.data()),
               qo_len,
               kv_len,
               num_kv_groups,
-              stride_bz_q, stride_seq_q, stride_h_q,
-              stride_bz_k, stride_seq_k, stride_h_k,
-              stride_bz_v, stride_h_v, stride_d_v,
-              stride_bz_o, stride_seq_o, stride_h_o,
+              stride_seq_q, stride_h_q,
+              stride_seq_k, stride_h_k,
+              stride_h_v, stride_d_v,
+              stride_seq_o, stride_h_o,
               sm_scale);
           });
         });
@@ -1080,8 +1058,6 @@ std::vector<paddle::Tensor> sage_attention_varlen_fwd(paddle::Tensor& q,        
   PD_CHECK(q.shape()[2] == 64 || q.shape()[2] == 128, "head_dim must be either 64 or 128");
   PD_CHECK(q.strides()[2] == 1 && k.strides()[2] == 1 && v.strides()[2] == 1, "Last dim of qkv must be contiguous.");
 
-  int seq_dim = (tensor_layout == 0) ? 1 : 2;
-
   // quant q, k -> q_int8, k_int8
   constexpr int BLKQ = 128;
   int WARPQ = 32;
@@ -1094,15 +1070,25 @@ std::vector<paddle::Tensor> sage_attention_varlen_fwd(paddle::Tensor& q,        
     if (smooth_v) smooth_v = false;
   }
 
-  std::vector<paddle::Tensor>&& quant_vfp8_results = per_channel_varlen_fp8(v, tensor_layout, 448.0, smooth_v);
+  std::vector<paddle::Tensor>&& quant_vfp8_results = per_channel_varlen_fp8(v, cu_seqlen_v, cu_seqlen_v_padded, 
+                                                                            max_seqlen_k, total_seqlen_v_padded,
+                                                                            tensor_layout, 448.0, smooth_v);
 
   switch (pv_accum_dtype_const) {
     case paddle::DataType::FLOAT32: {
-      qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_varlen_fwd(quant_qk_results[0], quant_qk_results[2], quant_vfp8_results[0], o, quant_qk_results[1], quant_qk_results[3], quant_vfp8_results[1], tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse);
+      qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_varlen_fwd(quant_qk_results[0], quant_qk_results[2], quant_vfp8_results[0], o, 
+                                                           quant_qk_results[1], quant_qk_results[3], quant_vfp8_results[1], 
+                                                           cu_seqlen_q, cu_seqlen_v_padded,
+                                                           max_seqlen_q, max_seqlen_k,
+                                                           tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse);
       break;
     }
     case paddle::DataType::UNDEFINED: {
-      qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm89_varlen_fwd(quant_qk_results[0], quant_qk_results[2], quant_vfp8_results[0], o, quant_qk_results[1], quant_qk_results[3], quant_vfp8_results[1], tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse);
+      qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf_sm89_varlen_fwd(quant_qk_results[0], quant_qk_results[2], quant_vfp8_results[0], o, 
+                                                                         quant_qk_results[1], quant_qk_results[3], quant_vfp8_results[1], 
+                                                                         cu_seqlen_q, cu_seqlen_v_padded,
+                                                                         max_seqlen_q, max_seqlen_k,
+                                                                         tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse);
       break;
     }
     default: {
@@ -1118,9 +1104,12 @@ std::vector<std::vector<int64_t>> sage_attention_varlen_InferShape(
   const std::vector<int64_t> query_shape, 
   const std::vector<int64_t> key_shape, 
   const std::vector<int64_t> value_shape,
+  const std::vector<int64_t> cu_seqlen_shape,
+  const std::vector<int64_t> cu_seqlen_v_shape,
+  const std::vector<int64_t> cu_seqlen_v_padded_shape,
   const std::vector<int64_t> km_shape,
   const paddle::optional<std::vector<int64_t>>& vm_shape) {
-    return {value_shape};
+    return {query_shape};
 }
 
 std::vector<paddle::DataType> sage_attention_varlen_InferDtype(
@@ -1128,15 +1117,19 @@ std::vector<paddle::DataType> sage_attention_varlen_InferDtype(
   const paddle::DataType B_dtype,
   const paddle::DataType C_dtype,
   const paddle::DataType D_dtype,
-  const paddle::optional<paddle::DataType>& E_dtype) {
+  const paddle::DataType E_dtype,
+  const paddle::DataType F_dtype,
+  const paddle::DataType G_dtype,
+  const paddle::optional<paddle::DataType>& H_dtype) {
   return {C_dtype};
 }
 
 PD_BUILD_OP(sage_attention_varlen)
-    .Inputs({"q", "k", "v", "km", "cu_seqlen", "segment_ids", paddle::Optional("vm")})
+    .Inputs({"q", "k", "v", "cu_seqlen_q", "cu_seqlen_v", "cu_seqlen_v_padded", "km", paddle::Optional("vm")})
     .Outputs({"o"})
     .Attrs({"max_seqlen_q: int",
             "max_seqlen_k: int",
+            "total_seqlen_v_padded: int",
             "sm_scale: float",
             "qk_quant_gran: std::string",
             "pv_accum_dtype: std::string",
