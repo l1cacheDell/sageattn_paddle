@@ -167,6 +167,8 @@ for capability in compute_capabilities:
 
 os.environ.pop('PADDLE_CUDA_ARCH_LIST', None)
 
+# NVCC_FLAGS += ["--keep", "-lineinfo"]
+
 setup(
     name='sageattn_custom_ops',
     ext_modules=[CUDAExtension(

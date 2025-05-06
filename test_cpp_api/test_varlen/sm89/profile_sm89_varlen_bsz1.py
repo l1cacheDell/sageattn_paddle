@@ -118,7 +118,7 @@ for i in range(100):
                                                 new_cu_seqlen_v[-1],
                                                 head_dim**-0.5,
                                                 "per_warp",
-                                                "fp32+fp32",
+                                                "fp32",
                                                 tensor_layout=0,
                                                 is_causal=is_causal,
                                                 smooth_k=True, 

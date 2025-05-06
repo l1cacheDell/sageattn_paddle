@@ -198,7 +198,7 @@ __global__ void qk_int_sv_f8_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t *
                             (lane_id % global_to_shared_line_lanes_QK) * PACK_SIZE_QK;
   // for fp16: CTA_K / num_warps * warp_id * stride_seq_v + lane_id / global_to_shared_line_lanes_V * stride_seq_v
   int8_t *V_lane_base_ptr = V + 
-                            cu_seqlen[batch_id] + 
+                            cu_seqlen_v_padded[batch_id] + 
                             (head_id / num_kv_groups) * stride_h_v + 
                             head_dim / num_warps * warp_id * stride_d_v + 
                             lane_id / global_to_shared_line_lanes_V * stride_d_v + 
@@ -567,6 +567,7 @@ __global__ void qk_int_sv_f8_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t *
     {
       ((float2*)v_scale)[0] = *((float2*)(V_scale_base_ptr + fv * 16));
       ((float2*)v_scale)[1] = *((float2*)(V_scale_base_ptr + fv * 16 + 8));
+      // ((float4*)v_scale)[0] = *((float4*)(V_scale_base_ptr + fv * 16));
 #pragma unroll
       for (uint32_t fq = 0; fq < num_tiles_q; fq++)
       {
@@ -687,7 +688,7 @@ __global__ void qk_int_sv_f8_attn_varlen_kernel(int8_t *__restrict__ Q, int8_t *
   }
 
   if constexpr (return_lse)
-  { 
+  {
     // ! this only works for num_tiles_q = 2
     uint32_t lse_idx = bx * CTA_Q + lane_id / 4 + 8 * (lane_id % 4) + WARP_Q * get_warp_idx_q<num_warps_q, num_warps_k>();
     float *lse_lane_ptr = Lse + batch_id * (bz_seqlen * num_qo_heads) + head_id * bz_seqlen + lse_idx;
